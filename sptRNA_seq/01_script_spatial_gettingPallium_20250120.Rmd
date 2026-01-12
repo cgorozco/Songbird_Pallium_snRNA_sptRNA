@@ -1,0 +1,314 @@
+---
+title: "Pallium Spatial_after Lei's cleaned clustering"
+output: html_notebook
+---
+
+This is after I have selected the slides that are high QC,
+and added metadata of slide information (in archives). I then sent to Lei,
+who worked on getting clustering more informed by spatial info, 
+so that there weren't one spatial dot from BG in pallium for e.g.
+
+###===== SET UP
+# LOAD LIBRARIES
+```{r}
+library(Seurat)
+library(tidyverse)
+library(readxl)
+library(Matrix)
+library(scrattch.hicat)
+
+options(future.globals.maxSize = 100000 * 1024^10)
+```
+
+# SET UP DIRECTORIES
+```{r}
+setwd("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_Spatial")
+root_dir <- "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_Spatial"
+
+RDSfiles <- paste0(root_dir, "/RDS_files")
+dir.create(RDSfiles, showWarnings = F)
+
+Figures_dir <- paste0(root_dir, "/Figures")
+dir.create(Figures_dir, showWarnings = F)
+
+Tables_dir <- paste0(root_dir, "/Tables")
+dir.create(Tables_dir, showWarnings = F)
+```
+
+# LOAD DATA
+```{r}
+spatial_all <-
+  readRDS(
+    file = "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_Spatial/RDS_files/FromLei_subSpatial_20240916_v4.1.rds"
+  )
+
+spatial_all$LXident <- Idents(spatial_all)
+```
+
+###===== GET PALLIUM CLUSTERS
+
+# VISUALIZE ALL OF TELE
+```{r}
+# visualize to only acquire pallium clusters
+SpatialDimPlot(spatial_all, group.by = "LXident", ncol = 2, pt.size.factor = 150, image.alpha = 0.2)
+ggsave(
+  filename = paste0(Figures_dir, "/01_AllTele_identifyPall/allTele_LXclusters.tiff"),
+  bg = "white", width = 10, height = 15
+)
+
+SpatialDimPlot(spatial_all, ncol = 2, pt.size.factor = 0, image.alpha = 1)
+ggsave(
+  filename = paste0(Figures_dir, "/tissue.tiff"),
+  bg = "white", width = 10, height = 15
+)
+
+for (i in levels(spatial_all@active.ident)) {
+  print(i)
+  SpatialDimPlot(spatial_all,
+    cells.highlight = WhichCells(spatial_all, idents = i),
+    ncol = 2, pt.size.factor = 150, image.alpha = 0.2
+  )
+  ggsave(
+    filename = sprintf("%s/01_AllTele_identifyPall/allTele_LXcluster_%s.tiff", Figures_dir, i),
+    bg = "white", width = 10, height = 15
+  )
+}
+
+
+custom_colors <- c(
+  "0" = "#ADD8E6",
+  "1" = "#B0B0B0",
+  "2" = "#808080",
+  "3" = "#87CEEB",
+  "4" = "#6495ED",
+  "5" = "#4682B4",
+  "6" = "#4169E1",
+  "7" = "black"
+)
+
+SpatialDimPlot(spatial_all,
+  group.by = "LXident", ncol = 2, pt.size.factor = 150, image.alpha = 0.2,
+  cols = custom_colors
+)
+ggsave(
+  filename = paste0(Figures_dir, "/01_AllTele_identifyPall/allTele_LXclusters_PallCols.tiff"),
+  bg = "white", width = 10, height = 15
+)
+```
+
+# SUBSET FOR PALLIUM
+```{r}
+spatial_pall <- subset(spatial_all, subset = LXident %in%
+  c("1", "2", "7"), invert = T)
+
+# Exclude by hand few cells not in pallium
+spatial_coords <- spatial_pall@images[["slice11"]]@coordinates
+beads_pick_11 <- rownames(spatial_coords)[spatial_coords$row > 50 & spatial_coords$col > 20]
+SpatialDimPlot(spatial_pall,
+  images = "slice11", cells.highlight = beads_pick_11,
+  ncol = 2, pt.size.factor = 150, image.alpha = 0.2
+)
+
+spatial_coords <- spatial_pall@images[["slice12"]]@coordinates
+beads_pick_12 <- rownames(spatial_coords)[spatial_coords$row > 50 & spatial_coords$col > 40]
+SpatialDimPlot(spatial_pall,
+  images = "slice12", cells.highlight = beads_pick_12,
+  ncol = 2, pt.size.factor = 150, image.alpha = 0.2
+)
+
+spatial_coords <- spatial_pall@images[["slice21"]]@coordinates
+beads_pick_21 <- rownames(spatial_coords)[spatial_coords$row > 70 & spatial_coords$col > 40]
+SpatialDimPlot(spatial_pall,
+  images = "slice21", cells.highlight = beads_pick_21,
+  ncol = 2, pt.size.factor = 150, image.alpha = 0.2
+)
+
+excl_beads <- c(beads_pick_11, beads_pick_12, beads_pick_21)
+
+spatial_pall <- subset(spatial_pall,
+  cells = excl_beads,
+  invert = T
+)
+
+spatial_pall$palliumBeads <- "pall"
+beadsInPall <- FetchData(spatial_pall, vars = "palliumBeads")
+saveRDS(beadsInPall, file = paste0(Tables_dir, "/PallBeads_meta_usingLXclustersNmanual.rds"))
+
+#- for checking
+SpatialDimPlot(spatial_pall,
+  ncol = 2, pt.size.factor = 150, image.alpha = 0.2
+)
+ggsave(
+  filename = paste0(Figures_dir, "/04_Pall/pallClean.tiff"),
+  bg = "white", width = 10, height = 15
+)
+
+SpatialFeaturePlot(spatial_pall,
+  features = "PVALB",
+  ncol = 2, pt.size.factor = 150, image.alpha = 0.2
+)
+ggsave(
+  filename = paste0(Figures_dir, "/04_Pall/pall_PVALB.tiff"),
+  bg = "white", width = 10, height = 15
+)
+```
+Lei's smoothed clustering, helps the most to select the beads to be found in pallium.
+The clusters themselves don't seem the best. I did other analysis in this script but mostly wanted just to get the beads in Pallium info.
+
+Will do integration of just pallium.
+This will give me the clusters for pallium,
+    and non_pall can keep the past identity.
+This is because some clusters were still spilling over
+
+###===== RE-NORMALIZE AND INTEGRATE DATA JUST THE PALLIUM
+```{r}
+spatial_pall[["Spatial"]] <- split(spatial_pall[["Spatial"]], f = spatial_pall$Slice)
+spatial_pall <- SCTransform(spatial_pall,
+  assay = "Spatial",
+  vars.to.regress = c("nCount_Spatial", "nFeature_Spatial"),
+  return.only.var.genes = F,
+  new.assay.name = "SCTbySlice_pall"
+)
+
+reductionUse <- "pca_sctSlice_pall"
+spatial_pall <- RunPCA(spatial_pall, assay = "SCTbySlice_pall", reduction.name = reductionUse)
+
+reductionInt <- paste0("integrated.rpca_", reductionUse)
+spatial_pall <- IntegrateLayers(
+  object = spatial_pall, method = RPCAIntegration,
+  orig.reduction = reductionUse, new.reduction = reductionInt,
+  normalization.method = "SCT", verbose = FALSE
+)
+
+spatial_pall <- RunUMAP(spatial_pall,
+  dims = 1:30,
+  reduction = reductionInt, reduction.name = "umap.integrated.rpca"
+) %>%
+  FindNeighbors(dims = 1:30, reduction = reductionInt)
+
+resolutions <- c(0.05, 0.1, 0.15, 0.2)
+for (res in resolutions) {
+  cluster_name <- paste0("SCTbySlice_snn_pall_res.", res)
+
+  spatial_pall <- FindClusters(spatial_pall, resolution = res, cluster.name = cluster_name)
+
+  SpatialDimPlot(spatial_pall,
+    group.by = cluster_name,
+    ncol = 2, pt.size.factor = 150, image.alpha = 0.2
+  )
+  ggsave(
+    filename = paste0(Figures_dir, "/04_Pall/pallClean_res", gsub("\\.", "", as.character(res)), ".tiff"),
+    bg = "white", width = 10, height = 15
+  )
+}
+
+saveRDS(spatial_pall, file = paste0(RDSfiles, "/spatialPallium_integrated.rds"))
+spatial_pall <- readRDS(file = paste0(RDSfiles, "/spatialPallium_integrated.rds"))
+
+Idents(spatial_pall) <- "SCTbySlice_snn_pall_res.0.1"
+for (clust in unique(Idents(spatial_pall))) {
+  spatial_pall <- FindSubCluster(spatial_pall,
+    graph.name = "SCTbySlice_snn",
+    cluster = clust, resolution = 0.05, subcluster.name = paste0("sub", clust)
+  )
+  Idents(spatial_pall) <- paste0("sub", clust)
+}
+
+SpatialDimPlot(spatial_pall, ncol = 2, pt.size.factor = 150, image.alpha = 0.2)
+
+
+#-- pick which res to use
+Idents(spatial_pall) <- "SCTbySlice_snn_pall_res.0.1"
+subFig_dir <- paste0(Figures_dir, "/integratedRes01/")
+
+for (i in levels(spatial_pall@active.ident)) {
+  print(i)
+  SpatialDimPlot(spatial_pall,
+    cells.highlight = WhichCells(spatial_pall, idents = i),
+    ncol = 2, pt.size.factor = 150, image.alpha = 0.1
+  )
+  ggsave(
+    filename = sprintf("%sclustering_subSlides_pallRes02_cluster%s.tiff", subFig_dir, i),
+    bg = "white", width = 10, height = 15
+  )
+}
+
+
+# seperate more regions
+#--arco
+Idents(spatial_pall) <- "SCTbySlice_snn_pall_res.0.1"
+spatial_pall <- FindSubCluster(spatial_pall,
+  graph.name = "SCTbySlice_snn",
+  cluster = 3, resolution = 0.05, subcluster.name = "sub_Arco"
+)
+SpatialDimPlot(spatial_pall,
+  group.by = "sub_Arco",
+  ncol = 2, pt.size.factor = 150, image.alpha = 0.2
+)
+
+Idents(spatial_pall) <- "sub_Arco"
+subFig_dir <- paste0(Figures_dir, "/sub_Arco/")
+for (i in levels(spatial_pall@active.ident)) {
+  print(i)
+  SpatialDimPlot(spatial_pall,
+    cells.highlight = WhichCells(spatial_pall, idents = i),
+    ncol = 2, pt.size.factor = 150, image.alpha = 0.2
+  )
+  ggsave(
+    filename = sprintf("%sclustering_subSlides_pallRes02_cluster%s.tiff", subFig_dir, i),
+    bg = "white", width = 10, height = 15
+  )
+}
+
+#--nido/lman/hyper
+Idents(spatial_pall) <- "sub_Arco"
+spatial_pall <- FindSubCluster(spatial_pall,
+  graph.name = "SCTbySlice_snn",
+  cluster = 0, resolution = 0.2, subcluster.name = "sub_ArcoNido"
+)
+
+Idents(spatial_pall) <- "sub_ArcoNido"
+subFig_dir <- paste0(Figures_dir, "/sub_ArcoNido/")
+for (i in levels(spatial_pall@active.ident)) {
+  print(i)
+  SpatialDimPlot(spatial_pall,
+    cells.highlight = WhichCells(spatial_pall, idents = i),
+    ncol = 2, pt.size.factor = 150, image.alpha = 0.2
+  )
+  ggsave(
+    filename = sprintf("%sclustering_subSlides_pallRes02_cluster%s.tiff", subFig_dir, i),
+    bg = "white", width = 10, height = 15
+  )
+}
+
+
+#- use this res
+SpatialDimPlot(spatial_pall,
+  group.by = "sub_Arco",
+  ncol = 2, pt.size.factor = 150, image.alpha = 0.2
+)
+ggsave(
+  filename = paste0(Figures_dir, "/resUse.tiff"),
+  bg = "white", width = 10, height = 15
+)
+saveRDS(spatial_pall, file = paste0(RDSfiles, "/spatialPallium_integrated_subRes.rds"))
+```
+
+RA seems to be clustering with mylin cluster...
+Maybe not do integration and instead just regress variables..?
+
+Best way seems to be subclustering the RA cluster
+- Increasing res in all leads to non-informative, such as not pulling RA
+- Subclustering Anterior Nido, also doesnt seem informative
+--> sticking to Res 0.1 with cluster 3(RA) subclustered
+
+
+
+#===== LOAD THE RESULTS FROM ABOVE
+```{r}
+spatial_pall <- readRDS(file = paste0(RDSfiles, "/spatialPallium_integrated_subRes.rds"))
+SpatialDimPlot(spatial_pall,
+  group.by = "sub_Arco",
+  ncol = 2, pt.size.factor = 150, image.alpha = 0.2
+)
+```
