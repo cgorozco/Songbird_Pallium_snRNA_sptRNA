@@ -10,7 +10,7 @@ comparative - Comparisons between songbird and chicken neurons. Scripts are divi
 
 snRNAseq_analysis – Subdirectories for downstream analyses of the processed zebra finch pallium snRNA-seq dataset. Including LISI scoring, classifying excitatory neurons of song-sorround brain regions, LIANA-based cell–cell communication, ...
 
-sptRNA_seq - Analysis of spatial transcriptomic dataset for clustering, processing, and integrating with snRNAseq dataset
+spatial_RNAseq - Analysis of spatial transcriptomic dataset for clustering, processing, and integrating with snRNAseq dataset
 
 trees - Hierarchical clustering of cell clusters
 
