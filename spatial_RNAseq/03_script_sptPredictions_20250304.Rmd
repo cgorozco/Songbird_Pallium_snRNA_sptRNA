@@ -1,0 +1,321 @@
+---
+title: "snRNA to sptRNA predictions"
+output: html_notebook
+---
+
+I want to test if prediction is different when using all brain vs just Pall
+
+###===== SET UP
+# LOAD LIBRARIES
+```{r}
+library(Seurat)
+library(tidyverse)
+library(readxl)
+library(Matrix)
+# library(scrattch.hicat)
+library(patchwork)
+library(ggrastr)
+
+source("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/Functions/CommonLevelsColors.R")
+
+options(future.globals.maxSize = 100000 * 1024^10)
+```
+
+# SET UP DIRECTORIES
+```{r}
+setwd("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_Spatial")
+root_dir <- "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_Spatial"
+
+RDSfiles <- paste0(root_dir, "/RDS_files")
+dir.create(RDSfiles, showWarnings = F)
+
+Figures_dir <- paste0(root_dir, "/Figures")
+dir.create(Figures_dir, showWarnings = F)
+
+Tables_dir <- paste0(root_dir, "/Tables")
+dir.create(Tables_dir, showWarnings = F)
+```
+
+# LOAD DATA
+```{r}
+# #- Spatial past
+# spatial_pall <-
+#   readRDS(
+#     file = paste0(RDSfiles, "/spatialPallium_integrated_subRes.rds"))
+# Idents(spatial_pall) <- "sub_Arco"
+
+#- Spatial
+# spatial_all <- readRDS(file = paste0(RDSfiles, "/spatialAll_integrated_20250207.rds"))
+spatial_all <- readRDS(file = paste0(RDSfiles, "/02_script_output/spatialAll_seurat_20260716.rds"))
+
+beadsInPall <- readRDS(file = paste0(Tables_dir, "/PallBeads_meta_usingLXclustersNmanual.rds"))
+spatial_all <- AddMetaData(spatial_all, beadsInPall)
+
+spatial_pall <- subset(spatial_all, subset = palliumBeads == "pall")
+
+#- single cell
+seuObj <- readRDS("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/06_Taxonomy/AllenClustering/RDS_files/OutputUse/seuObj_iterCluster_clean_20250131.rds")
+```
+
+###===== LABEL TRANSFER
+
+#-- CCA w/all brain
+```{r}
+anchors_ogID <- FindTransferAnchors(
+  reference = seuObj, query = spatial_all,
+  reference.assay = "SCTorigIdent3",
+  query.assay = "SCTbySlice",
+  normalization.method = "SCT",
+  recompute.residuals = F,
+  reduction = "cca"
+)
+saveRDS(anchors_ogID, file = paste0(RDSfiles, "/CCAanchors_SCT_20250305.rds"))
+anchors_ogID <- readRDS(file = paste0(RDSfiles, "/CCAanchors_SCT_20250305.rds"))
+
+predictions_ogID <- TransferData(
+  anchorset = anchors_ogID, refdata = seuObj$clusterName3,
+  weight.reduction = "cca"
+)
+
+spatial_all <- AddMetaData(spatial_all, metadata = predictions_ogID)
+
+
+saveRDS(spatial_all, file = paste0(RDSfiles, "/spatialAll_integrated_wPredic_20250717.rds"))
+spatial_all <- readRDS(file = paste0(RDSfiles, "/spatialAll_integrated_wPredic_20250717.rds"))
+```
+Found 56,432 anchors
+
+# visualize
+```{r}
+toPlot <- colnames(spatial_all@meta.data)[grep("prediction.score.", colnames(spatial_all@meta.data))]
+
+#- w/scores of all brain
+sub_figDir <- paste0(Figures_dir, "/05_corrPredictions/CCA_allBrain/")
+for (cluster in toPlot) {
+  SpatialFeaturePlot(spatial_all,
+    features = cluster,
+    crop = F,
+    ncol = 2, pt.size.factor = 140, image.alpha = 0.2
+  ) &
+    scale_fill_viridis_c(option = "viridis")
+  ggsave(
+    filename = paste0(sub_figDir, cluster, ".tiff"),
+    bg = "white", width = 15, height = 20
+  )
+}
+
+#- w/scores only in pallium
+sub_figDir <- paste0(Figures_dir, "/05_corrPredictions/CCA_pallBrain/")
+spatial_all_pallViz <- subset(spatial_all, subset = palliumBeads == "pall")
+
+for (cluster in toPlot) {
+  SpatialFeaturePlot(spatial_all_pallViz,
+    features = cluster,
+    crop = F,
+    ncol = 2, pt.size.factor = 140, image.alpha = 0.2
+  ) &
+    scale_fill_viridis_c(option = "viridis")
+  ggsave(
+    filename = paste0(sub_figDir, cluster, "_pall.tiff"),
+    bg = "white", width = 8, height = 15
+  )
+}
+```
+
+###===== PAPER FIGS
+#-- Main fig
+```{r}
+spatial_all <- readRDS(file = paste0(RDSfiles, "/spatialAll_integrated_wPredic_20250717.rds"))
+sub_figDir <- paste0(Figures_dir, "/10_PaperFigs/Predictions/")
+spatial_all_pallViz <- subset(spatial_all, subset = palliumBeads == "pall")
+
+
+slicesPlot <- c("slice12", "slice13")
+clustersPlot <- c(
+  "prediction.score.Glut.LMAN.45.",
+  "prediction.score.Glut.HVC.7.",
+  "prediction.score.Glut.RA.19.",
+  "prediction.score.Glut.NidoHyperPall.20.",
+  "prediction.score.Glut.Arco.1."
+)
+
+p <- list()
+for (clusterToPlot in clustersPlot) {
+  for (sliceToPlot in slicesPlot) {
+    p[[paste(sliceToPlot, clusterToPlot, sep = "_")]] <- SpatialFeaturePlot(spatial_all_pallViz,
+      features = clusterToPlot, images = sliceToPlot,
+      crop = F,
+      ncol = 1, pt.size.factor = 135, image.alpha = 0.2
+    ) +
+      scale_fill_viridis_c(option = "magma") + coord_equal() + NoLegend()
+  }
+}
+
+plots <- wrap_plots(p, ncol = 2)
+ggsave(paste0(sub_figDir, "/spatialPredic_magma.tiff"),
+  plot = plots,
+  width = 5, height = 7
+)
+# ggsave(paste0(sub_figDir, "/spatialPredic_magma_rstr.svg"), plot = plots,
+#        width = 5, height = 7)
+```
+
+#-- Supp fig
+## ALL PREDICTIONS
+
+### setup
+```{r}
+# spatial_all <- readRDS(file = paste0(RDSfiles, "/spatialAll_integrated_wPredic_20260617.rds"))
+spatial_all <- readRDS(file = paste0(RDSfiles, "/spatialAll_integrated_wPredic_20250717.rds"))
+sub_figDir <- paste0(Figures_dir, "/10_PaperFigs/Supp/AllPredic")
+spatial_all_pallViz <- subset(spatial_all, subset = palliumBeads == "pall")
+
+# order of slices and cluster
+slicesPlot <- names(spatial_all_pallViz@images)
+predic.dendro.order.3 <- paste0("prediction.score.", dendro.order.3)
+glutLvls.byRgnPct.order <- paste0("prediction.score.", glutLvls.byRgnPct)
+
+subFig_dir <- "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_Spatial/Figures/10_PaperFigs/Predictions/AllPredic"
+```
+
+### by class
+```{r}
+## gluts
+glut_clustersPlot <- names(spatial_all_pallViz@meta.data)[grepl("prediction.score.Glut", names(spatial_all_pallViz@meta.data))]
+glut_clustersPlot_order <- intersect(glutLvls.byRgnPct.order, glut_clustersPlot)
+glut_clustersPlot <- factor(glut_clustersPlot, levels = glut_clustersPlot_order)
+
+
+p <- list()
+ordered_names <- c()
+for (clusterToPlot in glut_clustersPlot_order) {
+  for (sliceToPlot in slicesPlot) {
+    clusterName <- gsub("prediction.score.", "", clusterToPlot)
+    plotName <- paste0(clusterToPlot, "_", sliceToPlot)
+
+    p[[plotName]] <- SpatialFeaturePlot(spatial_all_pallViz,
+      features = clusterToPlot,
+      images = sliceToPlot,
+      ncol = 1,
+      crop = F,
+      stroke = NA,
+      image.alpha = 0.2,
+      pt.size.factor = 130,
+    ) +
+      scale_fill_viridis_c(option = "magma") +
+      NoLegend() + ggtitle(paste(clusterName, sliceToPlot)) + coord_equal() #+ scale_x_reverse() # doesnt work w/reverse -.- wil do manually
+
+    # save_dir <- file.path(subFig_dir, "Gluts", clusterName)
+    # dir.create(save_dir, showWarnings = F)
+
+    ggsave(file.path(subFig_dir, "individual", paste0(clusterName, "_", sliceToPlot, ".svg")),
+      # dpi = 400,
+      plot = p[[plotName]],
+      width = 5, height = 5
+    )
+
+    ordered_names <- c(ordered_names, plotName)
+  }
+}
+
+# p <- p[rev(glut_clustersPlot_order)]
+# names(p) <- gsub("prediction.score.", "", names(p))
+
+p <- p[ordered_names]
+
+p_gluts_all <- wrap_plots(p, ncol = 7)
+ggsave(
+  filename = sprintf("%s/PalliumPredicScores_gluts_rstr.tiff", subFig_dir), plot = p_gluts_all,
+  bg = "white", width = 20, height = length(p) / 3.5
+)
+
+
+## gabas
+predic.dendro.order.3 <- paste0("prediction.score.", dendro_order_3) %>% gsub("[()]", ".", .)
+
+gaba_clustersPlot <- names(spatial_all_pallViz@meta.data)[grepl("MGE|LGE|CGE", names(spatial_all_pallViz@meta.data))]
+gaba_clustersPlot_order <- intersect(predic.dendro.order.3, gaba_clustersPlot)
+gaba_clustersPlot <- factor(gaba_clustersPlot, levels = gaba_clustersPlot_order)
+
+p_gaba <- list()
+for (clusterToPlot in gaba_clustersPlot) {
+  p_gaba[[clusterToPlot]] <- SpatialFeaturePlot(spatial_all_pallViz,
+    features = clusterToPlot,
+    # crop = F,
+    image.alpha = 0.2,
+    pt.size.factor = 150
+  ) &
+    scale_fill_viridis_c(option = "magma") &
+    NoLegend() & scale_x_reverse() & ggtitle(clusterToPlot) & coord_equal()
+}
+
+p_gaba <- p_gaba[rev(gaba_clustersPlot_order)]
+
+gaba_PlotList_supp_plots <- wrap_plots(p_gaba, ncol = 1) & theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
+ggsave(
+  filename = sprintf("%s/PalliumPredicScores_gabas.tiff", sub_figDir), plot = gaba_PlotList_supp_plots,
+  bg = "white", width = 12, height = 2 * length(p)
+)
+
+
+## non-neurons
+# predic.dendro.order.3 <- paste0("prediction.score.", dendro_order_3) %>% gsub("[()]", ".", .)
+
+nonNeu_clustersPlot <- names(spatial_all_pallViz@meta.data)[!grepl("MGE|LGE|CGE|prediction.score.Glut", names(spatial_all_pallViz@meta.data))]
+nonNeu_clustersPlot_order <- intersect(predic.dendro.order.3, nonNeu_clustersPlot)
+nonNeu_clustersPlot <- factor(nonNeu_clustersPlot, levels = nonNeu_clustersPlot_order)
+
+p_nonNeu <- list()
+for (clusterToPlot in nonNeu_clustersPlot) {
+  p_nonNeu[[clusterToPlot]] <- SpatialFeaturePlot(spatial_all_pallViz,
+    features = clusterToPlot,
+    # crop = F,
+    image.alpha = 0.2,
+    pt.size.factor = 150
+  ) &
+    scale_fill_viridis_c(option = "magma") &
+    NoLegend() & scale_x_reverse() & ggtitle(clusterToPlot) & coord_equal()
+}
+
+p_nonNeu <- p_nonNeu[rev(nonNeu_clustersPlot_order)]
+
+nonNeu_PlotList_supp_plots <- wrap_plots(p_nonNeu, ncol = 1) & theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
+ggsave(
+  filename = sprintf("%s/PalliumPredicScores_nonNeus.svg", sub_figDir), plot = nonNeu_PlotList_supp_plots,
+  bg = "white", width = 12, height = 2 * length(p)
+)
+```
+
+
+## I want to test if prediction score location is based on dissections
+Therefore using cluster 20
+```{r}
+seuObj$clusterName3_region <- paste(seuObj$clusterName3, seuObj$RegionAcronym, sep = "_")
+
+predictions_clusterName3_region <- TransferData(
+  anchorset = anchors_ogID, refdata = seuObj$clusterName3_region,
+  weight.reduction = "cca"
+)
+
+spatial_all_byRgn <- AddMetaData(spatial_all, metadata = predictions_clusterName3_region)
+
+glut_20_plot <- names(spatial_all_byRgn@meta.data)[grepl(".20._", names(spatial_all_byRgn@meta.data))]
+
+p2 <- list()
+for (clusterToPlot in glut_20_plot) {
+  p2[[clusterToPlot]] <- SpatialFeaturePlot(spatial_all_byRgn,
+    features = clusterToPlot,
+    # crop = F,
+    image.alpha = 0.2,
+    pt.size.factor = 150
+  ) &
+    scale_fill_viridis_c(option = "magma") &
+    NoLegend() & scale_x_reverse() & ggtitle(gsub("prediction.score.Glut.NidoHyperPall.", "", clusterToPlot)) & coord_equal()
+}
+
+PlotList_supp_glut20 <- wrap_plots(p2, ncol = 1) & theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
+ggsave(
+  filename = sprintf("%s/PalliumPredicScores_glutCluster20byRegion.tiff", sub_figDir), plot = PlotList_supp_glut20,
+  bg = "white", width = 12, height = 2 * length(p2)
+)
+```
