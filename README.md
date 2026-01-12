@@ -7,7 +7,7 @@ Seurat processed data objects can be accessed at https://cloud.biohpc.swmed.edu/
 Raw data can be accessed at NBCI GEO in GSE____
 
 ## Directories
-comparative - Comparisons between songbird and chicken neurons. Scripts are divided into excitatory or inhibitory neurons at various resolutions
+comparative - Comparisons between songbird and chicken neurons. Scripts are divided by excitatory or inhibitory neurons at different resolutions of clustering.
 
 snRNAseq_analysis – Subdirectories for downstream analyses of the processed zebra finch pallium snRNA-seq dataset. Including LISI scoring, LIANA-based cell–cell communication, ...
 
