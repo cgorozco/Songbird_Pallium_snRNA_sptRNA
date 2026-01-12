@@ -8,7 +8,7 @@ Raw data can be accessed at NBCI GEO in GSE____
 ## Directories
 comparative - Comparisons between songbird and chicken neurons. Scripts are divided by excitatory or inhibitory neurons at different resolutions of clustering.
 
-snRNAseq_analysis – Subdirectories for downstream analyses of the processed zebra finch pallium snRNA-seq dataset. Including LISI scoring, LIANA-based cell–cell communication, ...
+snRNAseq_analysis – Subdirectories for downstream analyses of the processed zebra finch pallium snRNA-seq dataset. Including LISI scoring, classifying excitatory neurons of song-sorround brain regions, LIANA-based cell–cell communication, ...
 
 trees - Hierarchical clustering of cell clusters
 
