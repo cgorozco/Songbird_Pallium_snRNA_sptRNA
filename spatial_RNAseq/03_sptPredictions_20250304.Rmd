@@ -1,20 +1,11 @@
----
-title: "snRNA to sptRNA predictions"
-output: html_notebook
----
-
-I want to test if prediction is different when using all brain vs just Pall
+Spatial prediction scores of snRNA-seq dataset.
 
 ###===== SET UP
 # LOAD LIBRARIES
 ```{r}
 library(Seurat)
 library(tidyverse)
-library(readxl)
-library(Matrix)
-# library(scrattch.hicat)
 library(patchwork)
-library(ggrastr)
 
 source("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/Functions/CommonLevelsColors.R")
 
@@ -38,20 +29,7 @@ dir.create(Tables_dir, showWarnings = F)
 
 # LOAD DATA
 ```{r}
-# #- Spatial past
-# spatial_pall <-
-#   readRDS(
-#     file = paste0(RDSfiles, "/spatialPallium_integrated_subRes.rds"))
-# Idents(spatial_pall) <- "sub_Arco"
-
-#- Spatial
-# spatial_all <- readRDS(file = paste0(RDSfiles, "/spatialAll_integrated_20250207.rds"))
 spatial_all <- readRDS(file = paste0(RDSfiles, "/02_script_output/spatialAll_seurat_20260716.rds"))
-
-beadsInPall <- readRDS(file = paste0(Tables_dir, "/PallBeads_meta_usingLXclustersNmanual.rds"))
-spatial_all <- AddMetaData(spatial_all, beadsInPall)
-
-spatial_pall <- subset(spatial_all, subset = palliumBeads == "pall")
 
 #- single cell
 seuObj <- readRDS("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/06_Taxonomy/AllenClustering/RDS_files/OutputUse/seuObj_iterCluster_clean_20250131.rds")
@@ -156,16 +134,16 @@ ggsave(paste0(sub_figDir, "/spatialPredic_magma.tiff"),
   plot = plots,
   width = 5, height = 7
 )
-# ggsave(paste0(sub_figDir, "/spatialPredic_magma_rstr.svg"), plot = plots,
-#        width = 5, height = 7)
 ```
+
+
 
 #-- Supp fig
 ## ALL PREDICTIONS
+Supplementary not used
 
 ### setup
 ```{r}
-# spatial_all <- readRDS(file = paste0(RDSfiles, "/spatialAll_integrated_wPredic_20260617.rds"))
 spatial_all <- readRDS(file = paste0(RDSfiles, "/spatialAll_integrated_wPredic_20250717.rds"))
 sub_figDir <- paste0(Figures_dir, "/10_PaperFigs/Supp/AllPredic")
 spatial_all_pallViz <- subset(spatial_all, subset = palliumBeads == "pall")
@@ -283,39 +261,5 @@ nonNeu_PlotList_supp_plots <- wrap_plots(p_nonNeu, ncol = 1) & theme(plot.margin
 ggsave(
   filename = sprintf("%s/PalliumPredicScores_nonNeus.svg", sub_figDir), plot = nonNeu_PlotList_supp_plots,
   bg = "white", width = 12, height = 2 * length(p)
-)
-```
-
-
-## I want to test if prediction score location is based on dissections
-Therefore using cluster 20
-```{r}
-seuObj$clusterName3_region <- paste(seuObj$clusterName3, seuObj$RegionAcronym, sep = "_")
-
-predictions_clusterName3_region <- TransferData(
-  anchorset = anchors_ogID, refdata = seuObj$clusterName3_region,
-  weight.reduction = "cca"
-)
-
-spatial_all_byRgn <- AddMetaData(spatial_all, metadata = predictions_clusterName3_region)
-
-glut_20_plot <- names(spatial_all_byRgn@meta.data)[grepl(".20._", names(spatial_all_byRgn@meta.data))]
-
-p2 <- list()
-for (clusterToPlot in glut_20_plot) {
-  p2[[clusterToPlot]] <- SpatialFeaturePlot(spatial_all_byRgn,
-    features = clusterToPlot,
-    # crop = F,
-    image.alpha = 0.2,
-    pt.size.factor = 150
-  ) &
-    scale_fill_viridis_c(option = "magma") &
-    NoLegend() & scale_x_reverse() & ggtitle(gsub("prediction.score.Glut.NidoHyperPall.", "", clusterToPlot)) & coord_equal()
-}
-
-PlotList_supp_glut20 <- wrap_plots(p2, ncol = 1) & theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
-ggsave(
-  filename = sprintf("%s/PalliumPredicScores_glutCluster20byRegion.tiff", sub_figDir), plot = PlotList_supp_glut20,
-  bg = "white", width = 12, height = 2 * length(p2)
 )
 ```
