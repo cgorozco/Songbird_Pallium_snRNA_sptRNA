@@ -1,0 +1,94 @@
+---
+title: "Recluster based on manual doublets clusters"
+output: html_notebook
+---
+
+###========== SET UP
+# LOAD LIBRARIES
+```{r}
+library(Seurat)
+library(tidyverse)
+source("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/Functions.R")
+library(readr)
+
+```
+
+# SET UP DIRECTORIES
+```{r}
+setwd('/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/04_CheckDbl_otherQC')
+root_dir <- '/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/04_CheckDbl_otherQC'
+
+RDSfiles <- paste0(root_dir, "/RDS_files")
+dir.create(RDSfiles, showWarnings = F)
+
+Figures_dir <- paste0(root_dir, "/Figures")
+dir.create(Figures_dir, showWarnings = F)
+
+```
+
+# LISTS
+```{r}
+CanMarkers <- c(
+  "SLC17A6", #glut cells,
+  # "NR2E1", #adult NSCs
+  # "SOX4", #neuronally committed precursors
+  # "DCX", #migrating neuroblasts
+  "GAD1", #gaba cells
+  "PDGFRA", #OPCs
+  "MBP", #Oligos
+  "LRIG1", #Astro
+  "CSF1R", #Microglia
+  "FLT1" #Endothelial
+  )
+
+```
+
+
+###========= PROCESS
+# LOAD ANNOTATED DATA AND 
+```{r}
+SeuObj <- readRDS(file = paste0(RDSfiles, "/Merged_umap_cellClass.rds"))
+
+```
+
+
+# VISUALIZE DOUBLET FLAGS
+```{r}
+DimPlot(SeuObj, group.by = "flag_MaybeDbl") + coord_equal()
+FeaturePlot(SeuObj, features = "doublet_score") + coord_equal()
+
+VlnPlot(SeuObj, features = "doublet_score", group.by = "flag_MaybeDbl", pt.size = 1)
+DotPlot(SeuObj, features = c(CanMarkers, "doublet_score")) + RotatedAxis()
+DotPlot(SeuObj, features = c(CanMarkers, "doublet_score", "BCAS1", "TCF7L2", "FOXJ1")) + RotatedAxis() + coord_flip()
+
+```
+
+
+# SUBSET BASED ON DOUBLETS FLAGS AND RE-CLUSTER
+```{r}
+sub_SeuObj <- subset(SeuObj, subset = flag_MaybeDbl == "NoFlag")
+
+assayUse <- "SCT_byRegion"
+reductionUse <- paste0("pca_", assayUse) 
+
+DefaultAssay(sub_SeuObj) <- "RNA"
+sub_SeuObj <- DietSeurat(sub_SeuObj, assays = "RNA")
+sub_SeuObj <- JoinLayers(sub_SeuObj)
+
+# standard process
+sub_SeuObj <- SCTransform(sub_SeuObj, new.assay.name = assayUse,
+                    vars.to.regress = "BirdID", return.only.var.genes = T)
+sub_SeuObj <- RunPCA(sub_SeuObj, assay = assayUse, reduction.name = reductionUse) %>%
+  FindNeighbors(dims = 1:30, reduction = reductionUse) %>%
+  FindClusters(resolution = 1, graph.name = paste0(assayUse, "_snn"), cluster.name = paste0("unintegrated_", reductionUse)) 
+sub_SeuObj <- RunUMAP(sub_SeuObj, dims = 1:30,
+                      reduction = reductionUse,
+                      reduction.name = paste0("umap.unintegrated_", assayUse))
+
+saveRDS(sub_SeuObj, file = paste0(RDSfiles, "/Merged_sctJoinOnlyVar_noDblFlagged.rds"))
+
+```
+
+
+
+

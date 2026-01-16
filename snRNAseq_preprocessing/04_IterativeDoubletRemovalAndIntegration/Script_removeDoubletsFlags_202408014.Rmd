@@ -1,0 +1,434 @@
+---
+title: "Recluster based on manual doublets clusters"
+output: html_notebook
+---
+
+###========== SET UP
+# LOAD LIBRARIES
+```{r}
+library(Seurat)
+library(tidyverse)
+library(patchwork)
+source("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/Functions.R")
+library(readr)
+
+options(future.globals.maxSize = 100000 * 1024^10)
+
+```
+
+# SET UP DIRECTORIES
+```{r}
+setwd('/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/04_CheckDbl_otherQC')
+root_dir <- '/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/04_CheckDbl_otherQC'
+
+RDSfiles <- paste0(root_dir, "/RDS_files")
+dir.create(RDSfiles, showWarnings = F)
+
+Figures_dir <- paste0(root_dir, "/Figures")
+dir.create(Figures_dir, showWarnings = F)
+
+```
+
+# LISTS
+```{r}
+CanMarkers <- c(
+  "SLC17A6", #glut cells,
+  # "NR2E1", #adult NSCs
+  # "SOX4", #neuronally committed precursors
+  # "DCX", #migrating neuroblasts
+  "GAD1", #gaba cells
+  "PDGFRA", #OPCs
+  "MBP", #Oligos
+  "LRIG1", #Astro
+  "CSF1R", #Microglia
+  "FLT1" #Endothelial
+  )
+
+```
+
+
+###========= PROCESS
+# LOAD ANNOTATED DATA AND 
+```{r}
+SeuObj <- readRDS(file = paste0(RDSfiles, "/Merged_umap_cellClass.rds"))
+
+```
+
+
+# VISUALIZE DOUBLET FLAGS
+```{r}
+DimPlot(SeuObj, group.by = "flag_MaybeDbl") + coord_equal()
+FeaturePlot(SeuObj, features = "doublet_score") + coord_equal()
+
+VlnPlot(SeuObj, features = "doublet_score", group.by = "flag_MaybeDbl", pt.size = 1)
+DotPlot(SeuObj, features = c(CanMarkers, "doublet_score")) + RotatedAxis()
+DotPlot(SeuObj, features = c(CanMarkers, "doublet_score", "BCAS1", "TCF7L2", "FOXJ1")) + RotatedAxis() + coord_flip()
+
+```
+
+
+# SUBSET BASED ON DOUBLETS FLAGS AND RE-CLUSTER
+```{r}
+sub_SeuObj <- subset(SeuObj, subset = flag_MaybeDbl == "NoFlag")
+
+assayUse <- "SCT_byRegion"
+reductionUse <- paste0("pca_", assayUse) 
+
+DefaultAssay(sub_SeuObj) <- "RNA"
+sub_SeuObj <- DietSeurat(sub_SeuObj, assays = "RNA")
+sub_SeuObj <- JoinLayers(sub_SeuObj)
+
+# standard process
+sub_SeuObj <- SCTransform(sub_SeuObj, new.assay.name = assayUse,
+                    vars.to.regress = "BirdID", return.only.var.genes = T)
+sub_SeuObj <- RunPCA(sub_SeuObj, assay = assayUse, reduction.name = reductionUse) %>%
+  FindNeighbors(dims = 1:30, reduction = reductionUse) %>%
+  FindClusters(resolution = 1, graph.name = paste0(assayUse, "_snn"), cluster.name = paste0("unintegrated_", reductionUse)) 
+sub_SeuObj <- RunUMAP(sub_SeuObj, dims = 1:30,
+                      reduction = reductionUse,
+                      reduction.name = paste0("umap.unintegrated_", assayUse))
+
+saveRDS(sub_SeuObj, file = paste0(RDSfiles, "/Merged_sctJoinOnlyVar_noDblFlagged.rds"))
+
+```
+AssayUse is wrong ugh, should have been by region
+
+# VISUALIZE--AND REMOVE MORE DOUBLETS
+```{r}
+sub_SeuObj <- readRDS(file = paste0(RDSfiles, "/Merged_sctJoinOnlyVar_noDblFlagged.rds"))
+
+sub_SeuObj <- BuildClusterTree(sub_SeuObj, features = c(CanMarkers, "doublet_score"), reorder = T)
+sub_SeuObj$Clusters2 <- Idents(sub_SeuObj)
+
+DimPlot(sub_SeuObj, label = T) + coord_equal()  + NoLegend()
+ggsave(filename = paste0(Figures_dir, "/DblClean2/umap_clusters.tiff"), 
+       bg = "white", width = 7, height = 7)
+
+DimPlot(sub_SeuObj, group.by = "CellClass_Sct_lvl2_CxG") + coord_equal()
+ggsave(filename = paste0(Figures_dir, "/DblClean2/umap_prevClass.tiff"), 
+       bg = "white", width = 8, height = 7)
+
+FeaturePlot(sub_SeuObj, features = "doublet_score", coord.fixed = T)
+ggsave(filename = paste0(Figures_dir, "/DblClean2/featurePlot_DblScore.tiff"), 
+       bg = "white", width = 7, height = 7)
+
+DotPlot(sub_SeuObj, features = c(CanMarkers, "doublet_score")) + RotatedAxis()
+ggsave(filename = paste0(Figures_dir, "/DblClean2/dotPlot_CanMarkers_DblScore.tiff"), 
+       bg = "white", width = 6, height = 15)
+
+```
+
+# EXCLUDE NEW DBL CLUSTER AND REPROCESS
+Doublet clusters identified by umap location, doublet score, and can marker expression.
+
+```{r}
+sub_SeuObj_3 <- subset(sub_SeuObj, subset = Clusters2 %in% c("62", "73", "45", "66", "69"), invert = T)
+
+DefaultAssay(sub_SeuObj_2) <- "RNA"
+sub_SeuObj_2 <- DietSeurat(sub_SeuObj_2, assay = "RNA")
+
+# standard process
+sub_SeuObj_2 <- SCTransform(sub_SeuObj_2, new.assay.name = assayUse,
+                    vars.to.regress = "BirdID", return.only.var.genes = T)
+sub_SeuObj_2 <- RunPCA(sub_SeuObj_2, assay = assayUse, reduction.name = reductionUse) %>%
+  FindNeighbors(dims = 1:30, reduction = reductionUse) %>%
+  FindClusters(resolution = 1, graph.name = paste0(assayUse, "_snn"), cluster.name = paste0("unintegrated_", reductionUse)) 
+sub_SeuObj_2 <- RunUMAP(sub_SeuObj_2, dims = 1:30,
+                      reduction = reductionUse,
+                      reduction.name = paste0("umap.unintegrated_", assayUse))
+
+
+# Figures 
+sub_SeuObj_2 <- BuildClusterTree(sub_SeuObj_2, features = c(CanMarkers, "doublet_score"), reorder = T)
+sub_SeuObj_2$Clusters3 <- Idents(sub_SeuObj_2)
+
+DimPlot(sub_SeuObj_2, label = T) + coord_equal()  + NoLegend()
+ggsave(filename = paste0(Figures_dir, "/DblClean3/umap_clusters.tiff"), 
+       bg = "white", width = 7, height = 7)
+
+DimPlot(sub_SeuObj_2, group.by = "CellClass_Sct_lvl2_CxG") + coord_equal()
+ggsave(filename = paste0(Figures_dir, "/DblClean3/umap_prevClass.tiff"), 
+       bg = "white", width = 8, height = 7)
+
+FeaturePlot(sub_SeuObj_2, features = "doublet_score", coord.fixed = T)
+ggsave(filename = paste0(Figures_dir, "/DblClean3/featurePlot_DblScore.tiff"), 
+       bg = "white", width = 7, height = 7)
+
+DotPlot(sub_SeuObj_2, features = c(CanMarkers, "doublet_score")) + RotatedAxis()
+ggsave(filename = paste0(Figures_dir, "/DblClean3/dotPlot_CanMarkers_DblScore.tiff"), 
+       bg = "white", width = 6, height = 15)
+
+idents <- unique(Idents(sub_SeuObj_2))
+plot_list <- list()
+
+for (ident in idents) {
+  p <- DimPlot(sub_SeuObj_2, cells.highlight = CellsByIdentities(sub_SeuObj_2, idents = ident)) + coord_equal()
+  plot_list[[as.character(ident)]] <- p
+}
+
+combined_plot <- wrap_plots(plot_list, ncol = 8)
+ggsave(filename = paste0(Figures_dir, "/DblClean3/umap_HiglightByClust.tiff"),  plot = combined_plot,
+       bg = "white", width = 40, height = 40)
+
+
+# only clusters to possible remove now 
+plot_list <- list()
+for (ident in c("33", "55", "21", "69")) {
+  p <- DimPlot(sub_SeuObj_2, cells.highlight = CellsByIdentities(sub_SeuObj_2, idents = ident)) + coord_equal()
+  plot_list[[as.character(ident)]] <- p
+}
+
+combined_plot <- wrap_plots(plot_list, ncol = 2)
+ggsave(filename = paste0(Figures_dir, "/DblClean3/umap_HiglightToRem.tiff"),  plot = combined_plot,
+       bg = "white", width = 12, height = 10)
+
+saveRDS(sub_SeuObj_2, file = paste0(RDSfiles, "/Merged_sctJoinOnlyVar_noDblFlagged_2ndClean.rds"))
+
+```
+
+#--- REMOVE SPREAD OUT CLUSTERS
+Will not re-do sct, since it should be minimal , jsut recluster
+
+```{r}
+assayUse <- "SCT_byRegion"
+reductionUse <- paste0("pca_", assayUse, "_recluster") 
+
+sub_SeuObj_3 <- subset(sub_SeuObj_2, subset = Clusters2 %in% c("55", "69"), invert = T)
+sub_SeuObj_3 <- DietSeurat(sub_SeuObj_3)
+
+# recluster
+sub_SeuObj_3 <- RunPCA(sub_SeuObj_3, assay = assayUse, reduction.name = reductionUse) %>%
+  FindNeighbors(dims = 1:30, reduction = reductionUse) %>%
+  FindClusters(resolution = 1, graph.name = paste0(assayUse, "_snn"), cluster.name = paste0("unintegrated_", reductionUse)) 
+sub_SeuObj_3 <- RunUMAP(sub_SeuObj_3, dims = 1:30,
+                      reduction = reductionUse,
+                      reduction.name = paste0("umap.unintegrated_", assayUse))
+
+# saveRDS(sub_SeuObj_3, file = paste0(RDSfiles, "/Merged_sctJoinOnlyVar_noDblFlagged_3rdClean.rds"))
+sub_SeuObj_3 <- readRDS(file = paste0(RDSfiles, "/Merged_sctJoinOnlyVar_noDblFlagged_3rdClean.rds"))
+sub_SeuObj_3 <- BuildClusterTree(sub_SeuObj_3, features = c(CanMarkers, "doublet_score"), reorder = T)
+sub_SeuObj_3$Clusters4 <- Idents(sub_SeuObj_3)
+
+# Figures 
+DimPlot(sub_SeuObj_3, label = T) + coord_equal()  + NoLegend()
+ggsave(filename = paste0(Figures_dir, "/DblClean4/umap_clusters.tiff"), 
+       bg = "white", width = 7, height = 7)
+
+DimPlot(sub_SeuObj_3, group.by = "CellClass_Sct_lvl2_CxG") + coord_equal()
+ggsave(filename = paste0(Figures_dir, "/DblClean4/umap_prevClass.tiff"), 
+       bg = "white", width = 8, height = 7)
+
+DimPlot(sub_SeuObj_3, group.by = "RegionAcronym") + coord_equal()
+ggsave(filename = paste0(Figures_dir, "/DblClean4/umap_Region.tiff"), 
+       bg = "white", width = 8, height = 7)
+
+FeaturePlot(sub_SeuObj_3, features = "doublet_score", coord.fixed = T)
+ggsave(filename = paste0(Figures_dir, "/DblClean4/featurePlot_DblScore.tiff"), 
+       bg = "white", width = 7, height = 7)
+
+DotPlot(sub_SeuObj_3, features = c(CanMarkers, "doublet_score")) + RotatedAxis()
+ggsave(filename = paste0(Figures_dir, "/DblClean4/dotPlot_CanMarkers_DblScore.tiff"), 
+       bg = "white", width = 6, height = 15)
+
+idents <- unique(Idents(sub_SeuObj_3))
+plot_list <- list()
+for (ident in idents) {
+  p <- DimPlot(sub_SeuObj_3, cells.highlight = CellsByIdentities(sub_SeuObj_3, idents = ident)) + coord_equal()
+  plot_list[[as.character(ident)]] <- p
+}
+
+combined_plot <- wrap_plots(plot_list, ncol = 8)
+ggsave(filename = paste0(Figures_dir, "/DblClean4/umap_HiglightByClust.tiff"),  plot = combined_plot,
+       bg = "white", width = 40, height = 40)
+
+
+IDs <- unique(sub_SeuObj_3$orig.ident)
+Idents(sub_SeuObj_3) <- "orig.ident"
+plot_list <- list()
+for (id in IDs) {
+  p <- DimPlot(sub_SeuObj_3, cells.highlight = CellsByIdentities(sub_SeuObj_3, idents = id), order = id) + coord_equal()
+  plot_list[[as.character(id)]] <- p
+}
+
+combined_plot <- wrap_plots(plot_list, ncol = 10)
+ggsave(filename = paste0(Figures_dir, "/DblClean4/umap_HiglightByOrigIdent.tiff"),  plot = combined_plot,
+       bg = "white", width = 45, height = 20, dpi = 600)
+
+```
+
+###----- WTH HBV_pub3???
+
+# HARMONY
+```{r}
+FeaturePlot(sub_SeuObj_3, features = c("nCount_SCT", "nFeature_SCT")) + coord_equal()
+
+IntObj_2 <- IntegrateLayers(
+  object = sub_SeuObj_3, method = HarmonyIntegration,
+  orig.reduction = "pca_SCT_byRegion_recluster", new.reduction = "harmony",
+  normalization.method = "SCT",
+  group.by.vars = "BirdID", 
+  verbose = TRUE
+)
+
+
+IntObj <- FindNeighbors(IntObj, dims = 1:30, reduction = "harmony", graph.name = c("harmony_nn", "harmony_snn")) %>%
+  FindClusters(resolution = 1, graph.name = "harmony_snn", cluster.name = "harmony_clusters") %>%
+  RunUMAP(dims = 1:30, reduction = "harmony", reduction.name = "umap.harmony")
+
+
+DimPlot(IntObj, group.by = "RegionAcronym") + coord_equal()
+DimPlot(IntObj, reduction = "umap.harmony", group.by = "RegionAcronym") + coord_equal()
+
+```
+
+Doesn't seem to higher Feature or Count...? 
+Let's see if integration gets rid of it,
+ 
+Harmony integration did nothing so then will go with RPCA, see if that changes things?
+
+
+####--- try two different splits
+
+0) Merge and sct regress BirdID did not work 
+1) by Region w/regress BirdID per region
+2) by ID
+# LOAD DATA
+```{r}
+sub_SeuObj_3 <- readRDS(file = paste0(RDSfiles, "/Merged_sctJoinOnlyVar_noDblFlagged_3rdClean.rds"))
+DefaultAssay(sub_SeuObj_3) <- "RNA"
+sub_SeuObj_byRegion <- DietSeurat(sub_SeuObj_3, assays = "RNA")
+
+```
+
+# SPLIT BY REGION W/BIRD ID REGRESS
+also excluding cluster 57, seems like OPC doublets
+```{r}
+# PREP OBJECT
+sub_SeuObj_byRegion[["RNA"]] <- split(sub_SeuObj_byRegion[["RNA"]], f = sub_SeuObj_byRegion$RegionAcronym)
+sub_SeuObj_byRegion$Clusters4 <- Idents(sub_SeuObj_byRegion)
+sub_SeuObj_byRegion <- subset(sub_SeuObj_byRegion, subset = Clusters4 == "57", invert = T)
+
+# STD PROCESSING
+assayUse <- "SCT_byRegion_rgrsID"
+reductionUse <- paste0("pca_", assayUse)
+
+sub_SeuObj_byRegion <- SCTransform(sub_SeuObj_byRegion, new.assay.name = assayUse, 
+                                   vars.to.regress = "BirdID", return.only.var.genes = T)
+
+sub_SeuObj_byRegion <- RunPCA(sub_SeuObj_byRegion, assay = assayUse, reduction.name = reductionUse)
+sub_SeuObj_byRegion <- RunUMAP(sub_SeuObj_byRegion, dims = 1:30, reduction = reductionUse, reduction.name = paste0("umap.unintegrated_", reductionUse))
+
+DimPlot(sub_SeuObj_byRegion, reduction = paste0("umap.unintegrated_", reductionUse), group.by = "RegionAcronym") +coord_equal()
+ggsave(filename = paste0(Figures_dir, "/DblClean5_chckHVCpub3/umap_ByRegion.tiff"),
+       bg = "white", width = 9, height = 8)
+
+DimPlot(sub_SeuObj_byRegion, reduction = paste0("umap.unintegrated_", reductionUse), cols = custom_colors, group.by = "orig.ident") +coord_equal() 
+ggsave(filename = paste0(Figures_dir, "/DblClean5_chckHVCpub3/umap_ByOrigIdent.tiff"),
+       bg = "white", width = 10, height = 8)
+
+DimPlot(sub_SeuObj_byRegion, reduction = paste0("umap.unintegrated_", reductionUse), group.by = "CellClass_Sct_lvl2_CxG") +coord_equal() 
+ggsave(filename = paste0(Figures_dir, "/DblClean5_chckHVCpub3/umap_ByCxGclass.tiff"),
+       bg = "white", width = 9, height = 8)
+
+IDs <- unique(sub_SeuObj_byRegion$orig.ident)
+Idents(sub_SeuObj_byRegion) <- "orig.ident"
+plot_list <- list()
+for (id in IDs) {
+  p <- DimPlot(sub_SeuObj_byRegion, cells.highlight = CellsByIdentities(sub_SeuObj_byRegion, idents = id), order = id) + coord_equal()
+  plot_list[[as.character(id)]] <- p
+}
+combined_plot <- wrap_plots(plot_list, ncol = 10)
+ggsave(filename = paste0(Figures_dir, "/DblClean5_chckHVCpub3/umap_HiglightByOrigIdent.tiff"),  plot = combined_plot,
+   bg = "white", width = 45, height = 20, dpi = 600)
+
+#--- Integrate Harmony
+sub_SeuObj_byRegion <- IntegrateLayers(object = sub_SeuObj_byRegion, 
+                                       method = HarmonyIntegration, 
+                                       orig.reduction = reductionUse,
+                                       new.reduction = "harmony",
+                                       normalization.method = "SCT",
+                                       verbose = FALSE)
+
+sub_SeuObj_byRegion[["RNA"]] <- JoinLayers(sub_SeuObj_byRegion[["RNA"]])
+
+sub_SeuObj_byRegion <- RunUMAP(sub_SeuObj_byRegion, reduction = "harmony", dims = 1:30, reduction.name = "umap.harmony")
+# saveRDS(sub_SeuObj_byRegion, paste0(RDSfiles, "/IntegrateHarmony_20240819.rds"))
+sub_SeuObj_byRegion <- readRDS(paste0(RDSfiles, "/IntegrateHarmony_20240819.rds"))
+
+# Harmony Figures
+sub_Fig_dir <- "/DblClean5_chckHVCpub3/Harmony/"
+
+DimPlot(sub_SeuObj_byRegion, reduction = "umap.harmony", group.by = "RegionAcronym") +coord_equal()
+ggsave(filename = paste0(Figures_dir, sub_Fig_dir, "umap_ByRegion.tiff"),
+       bg = "white", width = 9, height = 8)
+
+DimPlot(sub_SeuObj_byRegion, reduction = "umap.harmony", cols = custom_colors, group.by = "orig.ident") +coord_equal() 
+ggsave(filename = paste0(Figures_dir, sub_Fig_dir, "umap_ByOrigIdent.tiff"),
+       bg = "white", width = 10, height = 8)
+
+DimPlot(sub_SeuObj_byRegion, reduction = "umap.harmony", group.by = "CellClass_Sct_lvl2_CxG") +coord_equal() 
+ggsave(filename = paste0(Figures_dir, sub_Fig_dir, "umap_ByCxGclass.tiff"),
+       bg = "white", width = 9, height = 8)
+
+IDs <- unique(sub_SeuObj_byRegion$orig.ident)
+Idents(sub_SeuObj_byRegion) <- "orig.ident"
+plot_list <- list()
+for (id in IDs) {
+  p <- DimPlot(sub_SeuObj_byRegion, cells.highlight = CellsByIdentities(sub_SeuObj_byRegion, idents = id), order = id) + coord_equal()
+  plot_list[[as.character(id)]] <- p
+}
+combined_plot <- wrap_plots(plot_list, ncol = 10)
+ggsave(filename = paste0(Figures_dir, sub_Fig_dir, "umap_HiglightByOrigIdent.tiff"),  plot = combined_plot,
+   bg = "white", width = 45, height = 20, dpi = 600)
+
+```
+
+### one last try to integrate HVC_Pub3
+# RPCA integration
+```{r}
+sub_SeuObj_byRegion <- readRDS(paste0(RDSfiles, "/IntegrateHarmony_20240819.rds"))
+sub_SeuObj_byRegion[["RNA"]] <- split(sub_SeuObj_byRegion[["RNA"]], f = sub_SeuObj_byRegion$RegionAcronym)
+
+sub_SeuObj_byRegion <- IntegrateLayers(object = sub_SeuObj_byRegion, 
+                                       method = RPCAIntegration, 
+                                       orig.reduction = "pca_SCT_byRegion_rgrsID",
+                                       new.reduction = "rpca.integrated",
+                                       normalization.method = "SCT",
+                                       verbose = FALSE)
+
+sub_SeuObj_byRegion[["RNA"]] <- JoinLayers(sub_SeuObj_byRegion[["RNA"]])
+
+sub_SeuObj_byRegion <- RunUMAP(sub_SeuObj_byRegion, reduction = "rpca.integrated", dims = 1:30, reduction.name = "umap.rpca")
+
+saveRDS(sub_SeuObj_byRegion, file = paste0(RDSfiles, "/IntegratedRPCA_20240820.rds"))
+
+# figures
+sub_Fig_dir <- "/DblClean5_chckHVCpub3/RPCA/"
+
+DimPlot(sub_SeuObj_byRegion, reduction = "umap.rpca", group.by = "RegionAcronym") +coord_equal()
+ggsave(filename = paste0(Figures_dir, sub_Fig_dir, "umap_ByRegion.tiff"),
+       bg = "white", width = 9, height = 8)
+
+DimPlot(sub_SeuObj_byRegion, reduction = "umap.rpca", cols = custom_colors, group.by = "orig.ident") +coord_equal() 
+ggsave(filename = paste0(Figures_dir, sub_Fig_dir, "umap_ByOrigIdent.tiff"),
+       bg = "white", width = 10, height = 8)
+
+DimPlot(sub_SeuObj_byRegion, reduction = "umap.rpca", group.by = "CellClass_Sct_lvl2_CxG") +coord_equal() 
+ggsave(filename = paste0(Figures_dir, sub_Fig_dir, "umap_ByCxGclass.tiff"),
+       bg = "white", width = 9, height = 8)
+
+IDs <- unique(sub_SeuObj_byRegion$orig.ident)
+Idents(sub_SeuObj_byRegion) <- "orig.ident"
+plot_list <- list()
+for (id in IDs) {
+  p <- DimPlot(sub_SeuObj_byRegion, reduction = "umap.rpca", cells.highlight = CellsByIdentities(sub_SeuObj_byRegion, idents = id), order = id) + coord_equal()
+  plot_list[[as.character(id)]] <- p
+}
+combined_plot <- wrap_plots(plot_list, ncol = 10)
+ggsave(filename = paste0(Figures_dir, sub_Fig_dir, "umap_HiglightByOrigIdent.tiff"),  plot = combined_plot,
+   bg = "white", width = 45, height = 20, dpi = 600)
+
+```
+
+
+

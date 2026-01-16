@@ -1,0 +1,978 @@
+---
+title: "Reintegrate and subclustering"
+output: html_notebook
+---
+
+###========== SET UP
+# LOAD LIBRARIES
+```{r}
+library(Seurat)
+library(tidyverse)
+library(patchwork)
+library(readr)
+library(SeuratWrappers) 
+library(SeuratData)
+library(scCustomize)
+library(Azimuth)
+library(pheatmap)
+
+source("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/Functions.R")
+source("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/Functions/cell_proportionPlots_20240903.R")
+
+options(future.globals.maxSize = 100000 * 1024^10)
+
+```
+
+# SET UP DIRECTORIES
+```{r}
+setwd('/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/05c_ClassifyCells_subcluster_083024')
+root_dir <- '/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/05c_ClassifyCells_subcluster_083024'
+
+RDSfiles <- paste0(root_dir, "/RDS_files")
+dir.create(RDSfiles, showWarnings = F)
+
+Figures_dir <- paste0(root_dir, "/Figures")
+dir.create(Figures_dir, showWarnings = F)
+
+Tables_dir <- paste0(root_dir, "/Tables")
+dir.create(Figures_dir, showWarnings = F)
+
+```
+
+# LISTS
+```{r}
+CanMarkers <- c(
+  "SLC17A6", #glut cells,
+  # "NR2E1", #adult NSCs
+  # "SOX4", #neuronally committed precursors
+  # "DCX", #migrating neuroblasts
+  "GAD1", #gaba cells
+  "PDGFRA", #OPCs
+  "MBP", #Oligos
+  "LRIG1", #Astro
+  "CSF1R", #Microglia
+  "FLT1" #Endothelial
+  )
+
+```
+
+
+#=== LOAD DATA AND PREP
+```{r}
+seuObj <- readRDS(file = "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/04_CheckDbl_otherQC/RDS_files/IntegratedRPCA_CxGclass_20240826.rds")
+
+seuObj_2 <- subset(seuObj, subset = integrated.rpca_clusters %in% c("46", "53", "50", "51"), invert = T)
+
+# cell class
+seuObj_2$integrated.rpca_CellClass <- "Empty"
+cluster_class_mapping <- list(
+  Glutamatergic = c("2", "5", "20", "35", "22", "11", "32", "24", "27", "3", "47", "14", "0", "9", "30", "19", "37", "21", "29", "15", "26",
+                "39", "43", "16"),
+  GABAergic = c("52", "34", "1", "42", "33", "17", "13", "23", "36", "10", "38", "28",
+              "41"),
+  OPC_Oligo = c("12", "49", "45", "7"),
+  Endo = c("18", "40", "54"), #endo
+  Astro = c("25", "6", "8", "44", "48", "4"),
+  Microglia = c("31")
+) 
+
+for (class_name in names(cluster_class_mapping)) {
+  cluster_names <- cluster_class_mapping[[class_name]]
+  cluster_cells <- seuObj_2@active.ident %in% cluster_names
+  seuObj_2$integrated.rpca_CellClass[cluster_cells] <- class_name
+}
+
+DimPlot(seuObj_2, reduction = "umap.integrated.rpca", group.by = "integrated.rpca_CellClass") + coord_equal()
+
+```
+
+
+
+
+###==== Re-integrate with all cells by orig.ident
+
+1) sct and pca by each orig.ident 
+2) Subset by cell class (need to reclassify)
+3) Don't re-normalize, only run new graph and clusters and umap. (my thought: maybe not make new graph)
+
+# Integrate by orig.ident 
+```{r}
+# prep
+DefaultAssay(seuObj_2) <- "RNA"
+seuObj_2 <- DietSeurat(seuObj_2, assays = "RNA")
+
+seuObj_2 <- JoinLayers(seuObj_2)
+seuObj_2[["RNA"]] <- split(seuObj_2[["RNA"]], f = seuObj_2$orig.ident)
+
+# std process each w/just PCA
+assayUse <- "SCTorigIdent"
+reductionUse <- paste0("pca.", assayUse)
+
+seuObj_2 <- SCTransform(seuObj_2, new.assay.name = assayUse, return.only.var.genes = T)
+seuObj_2 <- RunPCA(seuObj_2, assay = assayUse, reduction.name = reductionUse) 
+
+reductionInt <- paste0('integrated.rpca_', reductionUse)
+seuObj_2 <- IntegrateLayers(object = seuObj_2, method = RPCAIntegration,
+                              orig.reduction = reductionUse, new.reduction = reductionInt,
+                              normalization.method = "SCT", verbose = FALSE)
+saveRDS(seuObj_2, file = paste0(RDSfiles, "/Integrated_sctByOrig_20240830.rds"))
+
+seuObj_2 <- FindNeighbors(seuObj_2, dims = 1:30, reduction = reductionInt,
+                            graph.name = c("rpca_nn", "rpca_snn")) %>% 
+  FindClusters(resolution = 1, graph.name = paste0("rpca", "_snn"), cluster.name = paste0(reductionInt, "_clusters_", "res1")) 
+seuObj_2 <- RunUMAP(seuObj_2, dims = 1:30,
+                              reduction = reductionInt,
+                              reduction.name = paste0("umap.", reductionInt))
+saveRDS(seuObj_2, file = paste0(RDSfiles, "/Integrated_sctByOrig_umap_20240830.rds"))
+
+seuObj_2 <- readRDS(file = paste0(RDSfiles, "/Integrated_sctByOrig_umap_20240830.rds")) #---- LAST SAVED !!!!!!!!!!!!
+
+# visualize
+DimPlot(seuObj_2, group.by = "orig.ident", cols = custom_colors, reduction = paste0("umap.", reductionInt)) + coord_equal()
+ggsave(filename = paste0(Figures_dir, "/umap_byOrigIdent.tiff"),
+       bg = "white", width = 8, height = 7)
+
+seuObj_2 <- BuildClusterTree(seuObj_2, features = CanMarkers, reorder = T)
+seuObj_2$integrated.rpca_pca.SCTorigIdent_clusters_res1 <- Idents(seuObj_2)
+
+DotPlot(seuObj_2, features = CanMarkers) + RotatedAxis()
+ggsave(filename = paste0(Figures_dir, "/dotplot_CanMarkers.tiff"),
+       bg = "white", width = 5, height = 9)
+
+stackMeta <- FetchData(seuObj_2, vars = c("orig.ident", "integrated.rpca_pca.SCTorigIdent_clusters_res1"))
+stackedbarplot_colors(stackMeta, "integrated.rpca_pca.SCTorigIdent_clusters_res1", "orig.ident")
+ggsave(filename = paste0(Figures_dir, "/stackplot_OrigIdent.tiff"),
+       bg = "white", width = 10, height = 15)
+
+#-- relcassify cell classes
+# cell class
+seuObj_2$integrated.rpca_CellClass_2 <- "Empty"
+cluster_class_mapping <- list(
+  Glutamatergic = c("18", "3", "7", "9", "19", "23", "38", "14", "24", "28", "2", "0", "6", "33", "25", "32",  "16", "22",
+                    "17"),
+  GABAergic = c("8", "29", "36", "10", "27", "31", "34", "41", "15", "20", "40", "13", "35",
+                "37"),
+  OPC_Oligo = c("12",
+                "4", "39"),
+  Endo = c("21"), 
+  Astro = c("26", "1", "5", "11"),
+  Microglia = c("30")
+) 
+
+for (class_name in names(cluster_class_mapping)) {
+  cluster_names <- cluster_class_mapping[[class_name]]
+  cluster_cells <- seuObj_2@active.ident %in% cluster_names
+  seuObj_2$integrated.rpca_CellClass_2[cluster_cells] <- class_name
+}
+
+DimPlot(seuObj_2, group.by = "integrated.rpca_CellClass_2") + coord_equal()
+DimPlot(seuObj_2, group.by = "orig.ident", cols = custom_colors) + coord_equal()
+DimPlot(seuObj_2, label = T) + coord_equal()
+
+IDs <- unique(seuObj_2$integrated.rpca_pca.SCTorigIdent_clusters_res1)
+Idents(seuObj_2) <- "integrated.rpca_pca.SCTorigIdent_clusters_res1"
+plot_list <- list()
+for (id in IDs) {
+  p <- DimPlot(seuObj_2, reduction = paste0("umap.", reductionInt),
+               cells.highlight = CellsByIdentities(seuObj_2, idents = id), order = id) + coord_equal()
+  plot_list[[as.character(id)]] <- p
+}
+combined_plot <- wrap_plots(plot_list, ncol = 10)
+ggsave(filename = paste0(Figures_dir, "/umap_HiglightByRPCA.tiff"),  plot = combined_plot,
+   bg = "white", width = 40, height = 25)
+
+
+```
+
+
+###==== REMOVE CLUSTERS ONCE AGAIN and reprocess
+```{r}
+FeaturePlot(seuObj_2, features = "nFeature_RNA", max.cutoff = 2000)
+VlnPlot_scCustom(seurat_object = seuObj_2, 
+               features = c("nFeature_RNA", "nFeature_SCTorigIdent"),
+               group.by = "integrated.rpca_CellClass_2", pt.size = 0.1) 
+
+seuObj_3 <- subset(seuObj_2, subset = integrated.rpca_pca.SCTorigIdent_clusters_res1 %in% c("33", "35"), invert = T)
+
+# prep
+DefaultAssay(seuObj_3) <- "RNA"
+seuObj_3 <- DietSeurat(seuObj_3, assays = "RNA")
+
+seuObj_3 <- JoinLayers(seuObj_3)
+seuObj_3[["RNA"]] <- split(seuObj_3[["RNA"]], f = seuObj_3$orig.ident)
+
+# std process each w/just PCA
+assayUse <- "SCTorigIdent2"
+reductionUse <- paste0("pca.", assayUse)
+
+seuObj_3 <- SCTransform(seuObj_3, new.assay.name = assayUse, return.only.var.genes = T)
+seuObj_3 <- RunPCA(seuObj_3, assay = assayUse, reduction.name = reductionUse) 
+
+reductionInt <- paste0('integrated.rpca_', reductionUse)
+seuObj_3 <- IntegrateLayers(object = seuObj_3, method = RPCAIntegration,
+                  orig.reduction = reductionUse, new.reduction = reductionInt,
+                  normalization.method = "SCT", verbose = FALSE)
+saveRDS(seuObj_3, file = paste0(RDSfiles, "/Integrated_sctByOrig_20240830.rds"))
+
+seuObj_3 <- FindNeighbors(seuObj_3, dims = 1:30, reduction = reductionInt,
+                            graph.name = c("rpca_nn", "rpca_snn")) %>% 
+  FindClusters(resolution = 1, graph.name = paste0("rpca", "_snn"), cluster.name = paste0(reductionInt, "_clusters_", "res1")) 
+seuObj_3 <- RunUMAP(seuObj_3, dims = 1:30,
+                              reduction = reductionInt,
+                              reduction.name = paste0("umap.", reductionInt))
+
+# saveRDS(seuObj_3, file = paste0(RDSfiles, "/Integrated_sctByOrig_umap_20240904.rds"))
+# seuObj_3 <- readRDS(file = paste0(RDSfiles, "/Integrated_sctByOrig_umap_20240904.rds"))
+
+# visualize
+DimPlot(seuObj_3, reduction = paste0("umap.", reductionInt), label = T) + coord_equal()
+DimPlot(seuObj_3, group.by = "orig.ident", cols = custom_colors, reduction = paste0("umap.", reductionInt)) +coord_equal()
+ggsave(filename = paste0(Figures_dir, "/umap_byOrigIdent.tiff"),
+       bg = "white", width = 8, height = 7)
+
+seuObj_3 <- BuildClusterTree(seuObj_3, features = CanMarkers, reorder = T)
+seuObj_3$integrated.rpca_pca.SCTorigIdent2_clusters_res1 <- Idents(seuObj_3)
+
+DotPlot(seuObj_3, features = CanMarkers) + RotatedAxis()
+ggsave(filename = paste0(Figures_dir, "/dotplot_CanMarkers.tiff"),
+       bg = "white", width = 5, height = 9)
+
+stackMeta <- FetchData(seuObj_3, vars = c("orig.ident", "integrated.rpca_pca.SCTorigIdent2_clusters_res1", "integrated.rpca_CellClass_2"))
+stackedbarplot_colors(stackMeta, "integrated.rpca_pca.SCTorigIdent2_clusters_res1", "orig.ident")
+ggsave(filename = paste0(Figures_dir, "/stackplot_origIdent.tiff"),
+       bg = "white", width = 10, height = 15)
+stackedbarplot(stackMeta, "integrated.rpca_pca.SCTorigIdent2_clusters_res1", "integrated.rpca_CellClass_2")
+ggsave(filename = paste0(Figures_dir, "/stackplot_CellClass2.tiff"),
+       bg = "white", width = 20, height = 15)
+# cell class doesn't seem to work so need to reclassify
+
+IDs <- unique(seuObj_3$integrated.rpca_pca.SCTorigIdent2_clusters_res1)
+Idents(seuObj_3) <- "integrated.rpca_pca.SCTorigIdent2_clusters_res1"
+plot_list <- list()
+for (id in IDs) {
+  p <- DimPlot(seuObj_3, reduction = paste0("umap.", reductionInt),
+               cells.highlight = CellsByIdentities(seuObj_3, idents = id), order = id) + coord_equal()
+  plot_list[[as.character(id)]] <- p
+}
+combined_plot <- wrap_plots(plot_list, ncol = 10)
+ggsave(filename = paste0(Figures_dir, "/umap_HiglightByRPCA.tiff"),  plot = combined_plot,
+   bg = "white", width = 40, height = 25)
+
+```
+
+# reclassify cells again
+```{r}
+unique(seuObj_3$integrated.rpca_pca.SCTorigIdent2_clusters_res1)
+
+seuObj_3$integrated.rpca_CellClass_3 <- "Unassigned"
+cluster_class_mapping <- list(
+  Glutamatergic = c("9", "21", "23", "37", "14", "27", "22", "13", "4", "17", "2", "0", "5", "28", "16", "19", "30", "33", 
+                  "18"),
+  GABAergic = c("8", "29", "35", "40", "26", "32", "34", "38", "15", "24", "10", "11",
+                "36"),
+  OPC_Oligo = c("12",
+                "6", "39"),
+  Endo = c("20"), 
+  Astro = c("25", "1", "3", "7"),
+  Microglia = c("31")
+) 
+
+# Loop through each class in the cluster_class_mapping and assign the cell class based on cluster identities
+for (class_name in names(cluster_class_mapping)) {
+  clusters <- cluster_class_mapping[[class_name]]
+  seuObj_3$integrated.rpca_CellClass_3[seuObj_3$integrated.rpca_pca.SCTorigIdent2_clusters_res1 %in% clusters] <- class_name
+}
+
+DimPlot(seuObj_3, label = T) + coord_equal()
+ggsave(filename = paste0(Figures_dir, "/umap_clusters.tiff"),
+       bg = "white", width = 8, height = 7)
+
+DimPlot(seuObj_3, group.by = "integrated.rpca_CellClass_3") + coord_equal()
+ggsave(filename = paste0(Figures_dir, "/umap_CellClass3.tiff"),
+       bg = "white", width = 8, height = 7)
+
+FeaturePlot(seuObj_3, features = "nFeature_SCTorigIdent2", coord.fixed = T) 
+
+
+###--- removing 40 and re-running UMAP >:3
+seuObj_4 <- subset(seuObj_3, subset = integrated.rpca_pca.SCTorigIdent2_clusters_res1 == "40", invert = T)
+seuObj_4 <- RunUMAP(seuObj_4, dims = 1:30,
+                              reduction = reductionInt,
+                              reduction.name = paste0("umap.", reductionInt))
+
+# fixing classification
+seuObj_4$integrated.rpca_CellClass_3[seuObj_4$integrated.rpca_pca.SCTorigIdent2_clusters_res1 %in% "36"] <- "GABAergic"
+
+DimPlot(seuObj_4, group.by = "integrated.rpca_CellClass_3") + coord_equal()
+DimPlot(seuObj_4, label = T) + coord_equal()
+DimPlot(seuObj_4, group.by = "orig.ident", cols = custom_colors) + coord_equal()
+
+
+
+```
+
+# RE-NORMALIZE AND STD PROCESS TO CHECK W/OUT CLUSTER 40
+Will continue with this one and reclassify cell one more.
+This is excluding cluster 40, which looked like ad GABA-micro doublets
+```{r}
+# prep
+DefaultAssay(seuObj_4) <- "RNA"
+seuObj_4 <- DietSeurat(seuObj_4, assays = "RNA")
+
+seuObj_4 <- JoinLayers(seuObj_4)
+seuObj_4[["RNA"]] <- split(seuObj_4[["RNA"]], f = seuObj_4$orig.ident)
+
+# std process each w/just PCA
+assayUse <- "SCTorigIdent3"
+reductionUse <- paste0("pca.", assayUse)
+
+seuObj_4 <- SCTransform(seuObj_4, new.assay.name = assayUse, return.only.var.genes = T)
+seuObj_4 <- RunPCA(seuObj_4, assay = assayUse, reduction.name = reductionUse) 
+
+reductionInt <- paste0('integrated.rpca_', reductionUse)
+seuObj_4 <- IntegrateLayers(object = seuObj_4, method = RPCAIntegration,
+                  orig.reduction = reductionUse, new.reduction = reductionInt,
+                  normalization.method = "SCT", verbose = FALSE)
+saveRDS(seuObj_4, file = paste0(RDSfiles, "/Integrated_sctByOrig_20240905.rds"))
+
+seuObj_4 <- FindNeighbors(seuObj_4, dims = 1:30, reduction = reductionInt,
+                            graph.name = c("rpca_nn", "rpca_snn")) %>% 
+  FindClusters(resolution = 1, graph.name = paste0("rpca", "_snn"), cluster.name = paste0(reductionInt, "_clusters_", "res1")) 
+seuObj_4 <- RunUMAP(seuObj_4, dims = 1:30,
+                              reduction = reductionInt,
+                              reduction.name = paste0("umap.", reductionInt))
+
+saveRDS(seuObj_4, file = paste0(RDSfiles, "/Integrated_sctByOrig_umap_20240905.rds"))
+seuObj_4 <- readRDS(file = paste0(RDSfiles, "/Integrated_sctByOrig_umap_20240905.rds"))
+
+# VISUALIZE
+DimPlot(seuObj_4, reduction = paste0("umap.", reductionInt), label = T) + coord_equal()
+ggsave(filename = paste0(Figures_dir, "/umap_clusters.tiff"),
+       bg = "white", width = 8, height = 7)
+
+DimPlot(seuObj_4, group.by = "orig.ident", cols = custom_colors, reduction = paste0("umap.", reductionInt)) +coord_equal()
+ggsave(filename = paste0(Figures_dir, "/umap_byOrigIdent.tiff"),
+       bg = "white", width = 8, height = 7)
+
+seuObj_4 <- BuildClusterTree(seuObj_4, features = CanMarkers, reorder = T)
+seuObj_4$integrated.rpca_pca.SCTorigIdent3_clusters_res1 <- Idents(seuObj_4)
+
+DotPlot(seuObj_4, features = CanMarkers) + RotatedAxis()
+ggsave(filename = paste0(Figures_dir, "/dotplot_CanMarkers.tiff"),
+       bg = "white", width = 5, height = 9)
+
+stackMeta <- FetchData(seuObj_4, vars = c("orig.ident", "integrated.rpca_pca.SCTorigIdent3_clusters_res1", "integrated.rpca_CellClass_3"))
+stackedbarplot_colors(stackMeta, "integrated.rpca_pca.SCTorigIdent3_clusters_res1", "orig.ident")
+ggsave(filename = paste0(Figures_dir, "/stackplot_origIdent.tiff"),
+       bg = "white", width = 10, height = 15)
+stackedbarplot(stackMeta, "integrated.rpca_pca.SCTorigIdent3_clusters_res1", "integrated.rpca_CellClass_3")
+ggsave(filename = paste0(Figures_dir, "/stackplot_CellClass3.tiff"),
+       bg = "white", width = 20, height = 15)
+
+IDs <- unique(seuObj_4$integrated.rpca_pca.SCTorigIdent3_clusters_res1)
+Idents(seuObj_4) <- "integrated.rpca_pca.SCTorigIdent3_clusters_res1"
+plot_list <- list()
+for (id in IDs) {
+  p <- DimPlot(seuObj_4, reduction = paste0("umap.", reductionInt),
+               cells.highlight = CellsByIdentities(seuObj_4, idents = id), order = id) + coord_equal()
+  plot_list[[as.character(id)]] <- p
+}
+combined_plot <- wrap_plots(plot_list, ncol = 10)
+ggsave(filename = paste0(Figures_dir, "/umap_HiglightByRPCAclusters.tiff"),  plot = combined_plot,
+   bg = "white", width = 40, height = 25)
+
+
+```
+Didn't recover more microglia, which is what I was trying. 
+So instead will proceed with current cleaning at subcluster level, and then recluster.
+ACTUALLY, will classify micro-endo as one, so might as well reclassify again.
+
+# reclassify cells--v4
+```{r}
+unique(seuObj_4$integrated.rpca_pca.SCTorigIdent3_clusters_res1)
+
+seuObj_4$integrated.rpca_CellClass_4 <- "Unassigned"
+cluster_class_mapping <- list(
+  Glutamatergic = c("11", "18", "21", "35", "4", "22", "2", "0", "7", "20", "3", "16",
+                    "15", "26", "13", "30", "32"),
+  GABAergic = c("8", "27", "33", "25", "29", "17", "24", "31", "36", "10", "14", "37", 
+                "34"),
+  OPC_Oligo = c("12", 
+                "5",  "38"),
+  Endo_Micro = c("19", 
+                 "28"), 
+  Astro = c("23", "1", "6", "9")
+) 
+
+# Loop through each class in the cluster_class_mapping and assign the cell class based on cluster identities
+for (class_name in names(cluster_class_mapping)) {
+  clusters <- cluster_class_mapping[[class_name]]
+  seuObj_4$integrated.rpca_CellClass_4[seuObj_4$integrated.rpca_pca.SCTorigIdent3_clusters_res1 %in% clusters] <- class_name
+}
+
+DimPlot(seuObj_4, group.by = "integrated.rpca_CellClass_4") + coord_equal()
+ggsave(filename = paste0(Figures_dir, "/umap_CellClass4.tiff"),
+       bg = "white", width = 8, height = 7)
+
+```
+
+
+
+###===== subclustering by cell Class
+modified later on 9/6/24 to make Endo_Micro as one group
+```{r}
+# seuObj_4 <- readRDS(file = paste0(RDSfiles, "/Integrated_sctByOrig_umap_20240905.rds"))
+# seuObj_4$integrated.rpca_CellClass_3[seuObj_4$integrated.rpca_CellClass_3 %in% c("Endo", "Microglia")] <- "Endo_Micro"
+
+CellClasses <- unique(seuObj_4$integrated.rpca_CellClass_4)
+# CellClasses <- CellClasses[5] # if want to test
+
+for (cellClass in CellClasses) {
+  sub_Seu <- subset(seuObj_4, subset = integrated.rpca_CellClass_3 == cellClass)
+  
+  sub_Seu <- FindNeighbors(sub_Seu, dims = 1:30, reduction = reductionInt,
+                           graph.name = c(paste0(cellClass, ".rpca_nn"), paste0(cellClass, ".rpca_snn"))) %>%
+    FindClusters(resolution = 1, graph.name = paste0(cellClass, ".rpca", "_snn"), 
+                 cluster.name = paste0(reductionInt, "_clusters_", cellClass, "_res1")) 
+  sub_Seu <- RunUMAP(sub_Seu, dims = 1:30,
+                              reduction = reductionInt,
+                              reduction.name = paste0("umap.", cellClass, ".", reductionInt))
+  
+  saveRDS(sub_Seu, paste0(RDSfiles, "/sub", cellClass, "_umap.rds"))
+  
+  # figures
+  subFig_dir <- paste0(Figures_dir, "/", cellClass, "/")
+  dir.create(subFig_dir)
+  
+  DimPlot(sub_Seu, reduction = paste0("umap.", cellClass, ".", reductionInt), group.by = "orig.ident", cols = custom_colors, shuffle = T) + coord_equal()
+  ggsave(filename = paste0(subFig_dir, "umap_byOrigIdent.tiff"),
+         bg = "white", width = 8, height = 7)
+
+  stackMeta <- FetchData(sub_Seu, vars = c("orig.ident", paste0(reductionInt, "_clusters_", cellClass, "_res1")))
+  stackedbarplot_colors(stackMeta, paste0(reductionInt, "_clusters_", cellClass, "_res1"), "orig.ident")
+  ggsave(filename = paste0(subFig_dir, "stackplot_byOrigIdent.tiff"),
+         bg = "white", width = 20, height = 15)
+  
+  DotPlot(sub_Seu, features = CanMarkers) + RotatedAxis()
+  ggsave(filename = paste0(subFig_dir, "dotplot_CanMarkers.tiff"),
+         bg = "white", width = 5, height = length(unique(sub_Seu@active.ident)) - (length(unique(sub_Seu@active.ident))*0.4))
+  
+  DimPlot(sub_Seu, reduction = paste0("umap.", cellClass, ".", reductionInt), shuffle = T, label = T) + coord_equal()
+  ggsave(filename = paste0(subFig_dir, "umap_bySubCluster.tiff"),
+         bg = "white", width = 8, height = 7)
+    
+}
+
+```
+
+
+#=== check specific subclusters
+# Azimuth
+```{r}
+#--- use azimuth to help classify cells classes quicker
+DefaultAssay(seuObj_4) <- "RNA"
+seuObj_4 <- JoinLayers(seuObj_4)
+seuObj_4 <- RunAzimuth(seuObj_4, reference = "mousecortexref")
+metaData <- seuObj_4[[49:57]]
+
+saveRDS(metaData, file = paste0(RDSfiles, "/meta_Predicted_MsCtx.rds"))
+
+DimPlot(seuObj_4, reduction = "umap.integrated.rpca_pca.SCTorigIdent3", group.by = "predicted.cross_species_cluster") + coord_equal()
+
+# make a cluster map, where each predicted cell class is
+IDs <- unique(seuObj_4$predicted.subclass)
+Idents(seuObj_4) <- "predicted.subclass"
+plot_list <- list()
+for (id in IDs) {
+  p <- DimPlot(seuObj_4, reduction = "umap.integrated.rpca_pca.SCTorigIdent3",
+               cells.highlight = CellsByIdentities(seuObj_4, idents = id), order = id) + coord_equal()
+  plot_list[[as.character(id)]] <- p
+}
+combined_plot <- wrap_plots(plot_list, ncol = 11)
+ggsave(filename = paste0(Figures_dir, "/umap_HiglightByPredicSubClass.tiff"),  plot = combined_plot,
+   bg = "white", width = 40, height = 20)
+
+
+metaData <- readRDS(file = paste0(RDSfiles, "/meta_Predicted_MsCtx.rds"))
+
+```
+
+
+# check specific subclusters for further figures
+```{r}
+# load specific subclusters and add metaData
+subEndoMicro <- readRDS(paste0(RDSfiles, "/subEndo_Micro_umap.rds"))
+
+subEndoMicro <- AddMetaData(subEndoMicro, metaData)
+
+IDs <- unique(subEndoMicro$predicted.subclass)
+Idents(subEndoMicro) <- "predicted.subclass"
+plot_list <- list()
+for (id in IDs) {
+  p <- DimPlot(subEndoMicro, reduction = "umap.Endo_Micro.integrated.rpca_pca.SCTorigIdent3",
+               cells.highlight = CellsByIdentities(subEndoMicro, idents = id), order = id) + coord_equal()
+  plot_list[[as.character(id)]] <- p
+}
+combined_plot <- wrap_plots(plot_list, ncol = 5)
+ggsave(filename = paste0(Figures_dir, "/Endo_Micro/umap_HiglightByPredicSubClass.tiff"),  plot = combined_plot,
+   bg = "white", width = 35, height = 30)
+
+
+DimPlot(subEndoMicro, reduction = "umap.Endo_Micro.integrated.rpca_pca.SCTorigIdent3", group.by = "predicted.subclass")
+
+
+#-- load in each subcluster in for loop
+subclustered <- list.files(path = paste0(RDSfiles, "/subclustered"))
+
+loaded_objects <- list()
+for (file in subclustered) {
+  obj_name <- gsub("sub|_umap.rds", "", file)
+  loaded_objects[[obj_name]] <- readRDS(paste0(RDSfiles, "/subclustered/", file))
+}
+
+for (obj_name in names(loaded_objects)) {
+  obj <- loaded_objects[[obj_name]]
+  obj <- AddMetaData(obj, metaData)
+  
+  IDs <- unique(obj$predicted.subclass)
+  Idents(obj) <- "predicted.subclass"
+  plot_list <- list()
+  for (id in IDs) {
+    p <- DimPlot(obj, reduction = paste0("umap.", obj_name, ".integrated.rpca_pca.SCTorigIdent3"),
+                 cells.highlight = CellsByIdentities(obj, idents = id), order = id) + coord_equal()
+    plot_list[[as.character(id)]] <- p
+  }
+  combined_plot <- wrap_plots(plot_list, ncol = 5)
+  ggsave(filename = paste0(Figures_dir, "/", obj_name, "/umap_HighlightByPredicSubClass.tiff"),  
+         plot = combined_plot, bg = "white", width = 35, height = 30)
+}
+
+```
+
+
+# create a dataframe of cells to remove based on subclustering
+```{r}
+clusters_to_extract <- list(
+  Endo_Micro = c(12, 13),
+  Astro = c(18),
+  GABAergic = c(26, 27, 28),
+  Glutamatergic = c(28)
+)
+
+filtered_cells <- list()
+for (obj_name in names(clusters_to_extract)) {
+  obj <- loaded_objects[[obj_name]]
+  cluster_col <- paste0("integrated.rpca_pca.SCTorigIdent3_clusters_", obj_name, "_res1")
+
+  if (cluster_col %in% colnames(obj@meta.data)) {
+    cluster_data <- obj@meta.data[[cluster_col]]
+    clusters <- clusters_to_extract[[obj_name]]
+    cell_ids <- rownames(obj@meta.data)[cluster_data %in% clusters]
+  filtered_cells[[obj_name]] <- cell_ids
+  } else {
+    warning(paste("Cluster column", cluster_col, "not found in", obj_name))
+  }
+}
+
+#-- Now drop from main seurat object and recluster
+seuObj_all <- readRDS(file = paste0(RDSfiles, "/Integrated_sctByOrig_cellClass_20240906.rds"))
+DimPlot(seuObj_all, cells.highlight = WhichCells(seuObj_all, cells = filtered_cells)) + coord_equal()
+
+all_cells_to_drop <- unlist(filtered_cells)
+seuObj_all_2 <- subset(seuObj_all, cells = all_cells_to_drop, invert = T)
+
+DimPlot(seuObj_all_2, label = T) + coord_equal()
+
+
+```
+
+
+# subclassify cells now
+```{r}
+DotPlot(seuObj_all_2, group.by = "integrated.rpca_CellClass_4", features = CanMarkers)
+
+seuObj_all_2$cellClass_lvl2 <- "Unassigned"
+cluster_class_mapping <- list(
+  Glutamatergic = c("11", "18", "21", "35", "4", "22", "2", "0", "7", "20", "3", "16",
+                    "15", "26", "13", "30", "32"),
+  GABAergic = c("8", "27", "33", "25", "29", "17", "24", "31", "36", "10", "14", "37", 
+                "34"),
+  OPC_Oligo = c("12",
+                "38",
+                "5"),
+  Endo = c("19"), 
+  Micro = c("28"), 
+  Astroependymal = c("23", "1", "6", "9")
+) 
+
+for (class_name in names(cluster_class_mapping)) {
+  clusters <- cluster_class_mapping[[class_name]]
+  seuObj_all_2$cellClass_lvl2[seuObj_all_2$integrated.rpca_pca.SCTorigIdent3_clusters_res1 %in% clusters] <- class_name
+}
+
+DimPlot(seuObj_all_2, group.by = "cellClass_lvl2") + coord_equal()
+
+###=== lvl3
+seuObj_all_2$cellClass_lvl3 <- seuObj_all_2$cellClass_lvl2
+
+# Astro subgroups
+seuObj_all_2$cellClass_lvl3[seuObj_all_2$integrated.rpca_pca.SCTorigIdent3_clusters_res1 %in% c(23)] <- "Epen"
+seuObj_all_2$cellClass_lvl3[seuObj_all_2$integrated.rpca_pca.SCTorigIdent3_clusters_res1 %in% c(1, 6, 9)] <- "Astro"
+
+# #-- subclassify oligos
+# obj <- loaded_objects[["OPC_Oligo"]]
+# DotPlot(obj, features = c("PDGFRA",
+#                           "GPR17", #COPs "SOX6"
+#                           "TCF7L2", #NFOLS
+#                           "MBP"))
+# 
+# 
+# Idents(seuObj_all_2) <- "integrated.rpca_pca.SCTorigIdent3_clusters_res1"
+# seuObj_all_2 <- FindSubCluster(seuObj_all_2, cluster = "38", graph.name = "rpca_snn", 
+#                                subcluster.name = "integrated.rpca_pca.SCTorigIdent3_clusters_res1_subcluster",
+#                                resolution = 0.2)
+# 
+# DimPlot(seuObj_all_2, label = T,
+#         group.by = "integrated.rpca_pca.SCTorigIdent3_clusters_res1_subcluster") + coord_equal()
+# 
+# DotPlot(seuObj_all_2, 
+#         group.by = "integrated.rpca_pca.SCTorigIdent3_clusters_res1_subcluster",
+#         features = c("PDGFRA",
+#                      "GPR17", #COPs "SOX6"
+#                      "TCF7L2", #NFOLS
+#                      "MBP"))   #---------------------------------------- EASIER WITH ALL TOGETHER
+
+seuObj_all_2$cellClass_lvl3[seuObj_all_2$integrated.rpca_pca.SCTorigIdent3_clusters_res1 %in% c(12)] <- "OPC"
+seuObj_all_2$cellClass_lvl3[seuObj_all_2$integrated.rpca_pca.SCTorigIdent3_clusters_res1 %in% c(38)] <- "TOL"
+seuObj_all_2$cellClass_lvl3[seuObj_all_2$integrated.rpca_pca.SCTorigIdent3_clusters_res1 %in% c(5)] <- "Oligo"
+
+DimPlot(seuObj_all_2, group.by = "cellClass_lvl3") + coord_equal()
+
+
+# #-- subclassify endos
+# obj <- loaded_objects[["Endo_Micro"]]
+# DotPlot(obj, features = c("FLT1",
+#                           "CALD1", "EBF1", "PDGFRB", "ACTA2", "CSPG4", # peris
+#                           "BNC2", "CPED1", "MGP" #VLMC
+#                           )) + RotatedAxis()
+
+
+#-- NEUROGENIC CELLS
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+
+seuObj_all_2 <- CellCycleScoring(
+  seuObj_all_2,
+  s.features = s.genes,
+  g2m.features = g2m.genes,
+  assay = 'SCTorigIdent3',
+  set.ident = F
+)
+
+DimPlot(seuObj_all_2, group.by = "Phase") + coord_equal()
+
+subFig_dir <- paste0(Figures_dir, "/", "Neurogenic", "/")
+dir.create(subFig_dir)
+
+seuObj_Neurons <- subset(seuObj_all_2, subset = cellClass_lvl3 %in% c("Glutamatergic", "GABAergic"))
+ImmMarkers <- c("NR2E1", "SOX4", "NECTIN3", "DCX")
+DotPlot(seuObj_Neurons, features = c(ImmMarkers, CanMarkers[1:2])) + RotatedAxis()
+ggsave(filename = paste0(subFig_dir, "/dotplot_ImmNeuMarkers.tiff"),
+       bg = "white", width = 5, height = 9)
+
+FeaturePlot(seuObj_Neurons, features = c(ImmMarkers), order = T, coord.fixed = T)
+
+seuObj_all_2$cellClass_lvl3[seuObj_all_2$integrated.rpca_pca.SCTorigIdent3_clusters_res1 %in% c(37, 34, 15, 13)] <- "Neurogenic" 
+DimPlot(seuObj_all_2, group.by = "cellClass_lvl3") + coord_equal()
+
+
+#-- GABAergic subtypes
+seuObj_all_2@meta.data <- seuObj_all_2@meta.data[, -c(15:45)]
+metaData <- readRDS(file = paste0(RDSfiles, "/meta_Predicted_MsCtx.rds"))
+seuObj_all_2 <- AddMetaData(seuObj_all_2, metaData)
+DimPlot(seuObj_all_2, group.by = "predicted.subclass", label = T)+coord_equal()
+
+IDs <- unique(seuObj_all_2$predicted.subclass)
+Idents(seuObj_all_2) <- "predicted.subclass"
+plot_list <- list()
+for (id in IDs) {
+  p <- DimPlot(seuObj_all_2, reduction = paste0("umap.integrated.rpca_pca.SCTorigIdent3"),
+             cells.highlight = CellsByIdentities(seuObj_all_2, idents = id), order = id) + coord_equal()
+  plot_list[[as.character(id)]] <- p
+}
+combined_plot <- wrap_plots(plot_list, ncol = 5)
+ggsave(filename = paste0(Figures_dir, "/umap_HighlightByPredicSubClass.tiff"),  
+       plot = combined_plot, bg = "white", width = 35, height = 30)
+
+seuObj_all_2$cellClass_lvl3[seuObj_all_2$integrated.rpca_pca.SCTorigIdent3_clusters_res1 %in% c(8)] <- "MGE_Pvalb" 
+seuObj_all_2$cellClass_lvl3[seuObj_all_2$integrated.rpca_pca.SCTorigIdent3_clusters_res1 %in% c(17, 24, 31, 36)] <- "MGE_Sst" 
+seuObj_all_2$cellClass_lvl3[seuObj_all_2$integrated.rpca_pca.SCTorigIdent3_clusters_res1 %in% c(27, 33)] <- "CGE_Lamp5" 
+seuObj_all_2$cellClass_lvl3[seuObj_all_2$integrated.rpca_pca.SCTorigIdent3_clusters_res1 %in% c(25)] <- "CGE_Vip" 
+seuObj_all_2$cellClass_lvl3[seuObj_all_2$integrated.rpca_pca.SCTorigIdent3_clusters_res1 %in% c(29)] <- "CGE_Vip_Sncg" 
+seuObj_all_2$cellClass_lvl3[seuObj_all_2$integrated.rpca_pca.SCTorigIdent3_clusters_res1 %in% c(10, 14)] <- "LGE" 
+
+DimPlot(seuObj_all_2, group.by = "cellClass_lvl3") + coord_equal()
+new_order <- c("Astro", "Epen", 
+             "OPC", "TOL", "Oligo",
+             "Endo", "Micro",
+             "MGE_Pvalb", "MGE_Sst", "CGE_Lamp5", "CGE_Vip", "CGE_Vip_Sncg", "LGE", #GABAergic
+             "Neurogenic",
+             "Glutamatergic")
+seuObj_all_2$cellClass_lvl3 <- factor(seuObj_all_2$cellClass_lvl3, levels = new_order)
+DimPlot(seuObj_all_2, 
+        group.by = "cellClass_lvl3",
+        label = T,
+        cols = c(colorRampPalette(c("#bf8e56", "#f3cca0"))(2),
+                 colorRampPalette(c("#e0acf3", "#7e3f94"))(3),
+                 "#ba9d9a", "#923830", 
+                 colorRampPalette(c("#c5d8c8", "#108b24"))(6),
+                 "#83cacc",
+                 "#4278c0"
+                )
+        ) + coord_equal()
+ggsave(filename = paste0(Figures_dir, "/umap_CellClass_lvl3.tiff"),
+       bg = "white", width = 8, height = 7)
+
+saveRDS(seuObj_all_2, file = paste0(RDSfiles, "/Integrated_sctByOrig_cellClassLvl3_20241001.rds"))
+seuObj_all_2 <- readRDS(paste0(RDSfiles, "/Integrated_sctByOrig_cellClassLvl3_20241001.rds"))
+
+```
+
+#--- Class levels coloring
+```{r}
+# add other higher levels
+seuObj_all_2$cellClass_lvl0 <- "unassigned"
+seuObj_all_2$cellClass_lvl0[seuObj_all_2$cellClass_lvl2 %in% c("Glutamatergic", "GABAergic")] <- "Neurons" 
+seuObj_all_2$cellClass_lvl0[seuObj_all_2$cellClass_lvl2 %in% c("OPC_Oligo","Astroependymal","Micro","Endo")] <- "Non-neurons" 
+DimPlot(seuObj_all_2, group.by = "cellClass_lvl0", cols = c("#7f8ea8", "#a79c88")) + coord_equal()
+ggsave(filename = paste0(Figures_dir, "/umap_CellClass_lvl0.tiff"),
+       bg = "white", width = 8, height = 7)
+
+seuObj_all_2$cellClass_lvl1a <- "unassigned"
+seuObj_all_2$cellClass_lvl1a[seuObj_all_2$cellClass_lvl2 %in% c("Glutamatergic", "GABAergic")] <- "Neurons" 
+seuObj_all_2$cellClass_lvl1a[seuObj_all_2$cellClass_lvl2 %in% c("OPC_Oligo","Astroependymal")] <- "Non-neuronal" 
+seuObj_all_2$cellClass_lvl1a[seuObj_all_2$cellClass_lvl2 %in% c("Micro","Endo")] <- "Non-neural" 
+DimPlot(seuObj_all_2, group.by = "cellClass_lvl1a", cols = c("#7f8ea8", "#dac092", "#927c55")) + coord_equal()
+ggsave(filename = paste0(Figures_dir, "/umap_CellClass_lvl1a.tiff"),
+       bg = "white", width = 8, height = 7)
+
+seuObj_all_2$cellClass_lvl1b <- "unassigned"
+seuObj_all_2$cellClass_lvl1b[seuObj_all_2$cellClass_lvl2 %in% c("Glutamatergic", "GABAergic")] <- "Neurons" 
+seuObj_all_2$cellClass_lvl1b[seuObj_all_2$cellClass_lvl2 %in% c("OPC_Oligo","Astroependymal","Micro")] <- "Glia" 
+seuObj_all_2$cellClass_lvl1b[seuObj_all_2$cellClass_lvl2 %in% c("Endo")] <- "Endo" 
+DimPlot(seuObj_all_2, group.by = "cellClass_lvl1b", cols = c("#b8b5b4", "#a89089", "#7f8ea8")) + coord_equal()
+ggsave(filename = paste0(Figures_dir, "/umap_CellClass_lvl1b.tiff"),
+       bg = "white", width = 8, height = 7)
+
+seuObj_all_2$cellClass_lvl2 <- factor(seuObj_all_2$cellClass_lvl2, levels = c("Glutamatergic", "GABAergic", "Astroependymal", "OPC_Oligo", "Micro", "Endo"))
+DimPlot(seuObj_all_2, group.by = "cellClass_lvl2", cols = c("#4278c0", "#6aa974", "#d3a269", "#9c77a9",  "#923830", "#ba9d9a")) + coord_equal()
+ggsave(filename = paste0(Figures_dir, "/umap_CellClass_lvl2.tiff"),
+       bg = "white", width = 8, height = 7)
+
+```
+Higher levels I have decided are inaccurate, but will change later
+
+#-- Remove clusters with high nCount_RNA by subcluster
+```{r}
+VlnPlot_scCustom(seuObj_all_2, features = "nFeature_RNA",
+               group.by = "cellClass_lvl0", 
+               colors_use = c("#7f8ea8", "#a79c88"),
+               plot_boxplot = T,
+               pt.size = 0)
+
+meta_nFeatureRNA <- seuObj_all_2[[c("nFeature_RNA", "cellClass_lvl0", "cellClass_lvl2")]]
+meta_nFeatureRNA <- meta_nFeatureRNA %>% rownames_to_column(var = "cellID")
+metadata_outliers <- meta_nFeatureRNA %>%
+  group_by(cellClass_lvl0) %>%
+  mutate(
+  Q1 = quantile(nFeature_RNA, 0.25),
+  Q3 = quantile(nFeature_RNA, 0.75),
+  IQR = Q3 - Q1,
+  Outlier_byRNAfeat = (nFeature_RNA < (Q1 - 6 * IQR)) | (nFeature_RNA > (Q3 + 6 * IQR))
+  ) %>% column_to_rownames(var = "cellID")
+
+summary_table <- metadata_outliers %>%
+  group_by(cellClass_lvl2) %>%
+  summarize(
+    Q1 = unique(Q1),
+    Q3 = unique(Q3),
+    IQR = unique(IQR),
+    cutoff_6byIQR = (Q3 + 6 * IQR),
+    Outlier_Count = sum(Outlier_byRNAfeat),
+    PercentRemoved = (sum(Outlier_byRNAfeat)/n())*100
+  )
+write.csv(summary_table, file = paste0(Tables_dir, "/summaryDrop_subClass_nFeatureRNA_table.csv"), row.names = FALSE)
+
+metadata_outliers_2 <- select(metadata_outliers, Outlier_byRNAfeat)
+seuObj_all_2 <- AddMetaData(seuObj_all_2, metadata = metadata_outliers_2)
+
+lvls <- c("cellClass_lvl0", "cellClass_lvl2", "cellClass_lvl3")
+for (lvl in lvls) {
+  VlnPlot_scCustom(seuObj_all_2, features = "nFeature_RNA",
+               group.by = lvl, 
+               split.by = "Outlier_byRNAfeat",
+               colors_use = c("#4278c0", "#d3a269"))
+  ggsave(filename = paste0(Figures_dir, "/vlnplot_", lvl, "RNAfeatDrop.tiff"),
+         bg = "white", width = 7, height = 8)
+}
+
+DimPlot(seuObj_all_2, group.by = "Outlier_byRNAfeat") + coord_equal()
+
+saveRDS(seuObj_all_2, file = paste0(RDSfiles, "/Integrated_sctByOrig_cellClassLvl3_20241001.rds"))
+
+seuObj_all_2 <- subset(seuObj_all_2, subset = Outlier_byRNAfeat == "FALSE")
+saveRDS(seuObj_all_2, file = paste0(RDSfiles, "/OutputObject_toUse/Integrated_sctByOrig_cellClassLvl3_20241001_notOutliers.rds"))
+
+```
+
+# DOES INCREASING RESOLTUION SPLIT CLUSTER 35
+```{r}
+seuObj_all_2 <- readRDS(file = paste0(RDSfiles, "/OutputObject_toUse/Integrated_sctByOrig_cellClassLvl3_20241001_notOutliers.rds"))
+
+assayUse <- "SCTorigIdent"
+reductionUse <- paste0("pca.", assayUse)
+reductionInt <- paste0('integrated.rpca_', reductionUse)
+
+for (resUse in seq(from = 1.2, to = 2.4, by = 0.2)) {
+  seuObj_all_2 <- FindClusters(seuObj_all_2, resolution = resUse, graph.name = paste0("rpca", "_snn"), 
+                               cluster.name = paste0(reductionInt, "_clusters_", resUse))
+}
+
+saveRDS(seuObj_all_2, file = paste0(RDSfiles, "/OutputObject_toUse/Integrated_sctByOrig_cellClassLvl3_notOutliers_res1to24_20241018.rds"))
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#########========= NOT USED 
+
+##-- RENAMING LEVELS
+This part not done
+```{r}
+seuObj_all_2 <- readRDS(file = paste0(RDSfiles, "/Integrated_sctByOrig_cellClassLvl3_20240912.rds"))
+
+# add other higher levels
+seuObj_all_2$cellClass_lvl0 <- "unassigned"
+seuObj_all_2$cellClass_lvl0[seuObj_all_2$cellClass_lvl2 %in% c("Glutamatergic", "GABAergic")] <- "Neurons" 
+seuObj_all_2$cellClass_lvl0[seuObj_all_2$cellClass_lvl2 %in% c("OPC_Oligo","Astro","Micro","Endo")] <- "Non-neurons" 
+DimPlot(seuObj_all_2, group.by = "cellClass_lvl0", cols = c("#7f8ea8", "#a79c88")) + coord_equal()
+ggsave(filename = paste0(Figures_dir, "/umap_CellClass_lvl0.tiff"),
+       bg = "white", width = 8, height = 7)
+
+seuObj_all_2$cellClass_lvl1a <- "unassigned"
+seuObj_all_2$cellClass_lvl1a[seuObj_all_2$cellClass_lvl2 %in% c("Glutamatergic", "GABAergic")] <- "Neurons" 
+seuObj_all_2$cellClass_lvl1a[seuObj_all_2$cellClass_lvl2 %in% c("OPC_Oligo","Astro")] <- "Non-neuronal" 
+seuObj_all_2$cellClass_lvl1a[seuObj_all_2$cellClass_lvl2 %in% c("Micro","Endo")] <- "Non-neural" 
+DimPlot(seuObj_all_2, group.by = "cellClass_lvl1a", cols = c("#7f8ea8", "#dac092", "#927c55")) + coord_equal()
+ggsave(filename = paste0(Figures_dir, "/umap_CellClass_lvl1a.tiff"),
+       bg = "white", width = 8, height = 7)
+
+seuObj_all_2$cellClass_lvl1b <- "unassigned"
+seuObj_all_2$cellClass_lvl1b[seuObj_all_2$cellClass_lvl2 %in% c("Glutamatergic", "GABAergic")] <- "Neurons" 
+seuObj_all_2$cellClass_lvl1b[seuObj_all_2$cellClass_lvl2 %in% c("OPC_Oligo","Astro","Micro")] <- "Glia" 
+seuObj_all_2$cellClass_lvl1b[seuObj_all_2$cellClass_lvl2 %in% c("Endo")] <- "Endo" 
+DimPlot(seuObj_all_2, group.by = "cellClass_lvl1b", cols = c("#b8b5b4", "#a89089", "#7f8ea8")) + coord_equal()
+ggsave(filename = paste0(Figures_dir, "/umap_CellClass_lvl1b.tiff"),
+       bg = "white", width = 8, height = 7)
+
+seuObj_all_2$cellClass_lvl2 <- factor(seuObj_all_2$cellClass_lvl2, levels = c("Glutamatergic", "GABAergic", "Astro", "OPC_Oligo", "Micro", "Endo"))
+DimPlot(seuObj_all_2, group.by = "cellClass_lvl2", cols = c("#4278c0", "#6aa974", "#d3a269", "#9c77a9",  "#923830", "#ba9d9a")) + coord_equal()
+ggsave(filename = paste0(Figures_dir, "/umap_CellClass_lvl2.tiff"),
+       bg = "white", width = 8, height = 7)
+```
+
+
+
+
+###===== RECLUSTER AGAIN, for a check -- spoiler, didn't change it, so ignore below
+Removing nCount flags from above and also regressing sequencing depth variables
+This to check if glut_35 LMAN is still clustering in weird way,
+and also Astro different cluster. Justin Case
+
+# Load data
+```{r}
+seuObj_all_2 <- readRDS(file = paste0(RDSfiles, "/Integrated_sctByOrig_cellClassLvl3_20240912.rds"))
+DimPlot(seuObj_all_2, group.by = "Outlier_byRNAfeat") + coord_equal()
+
+```
+
+# Standard process
+Removing flags and also regressing sequencing depth variables
+This to check if glut_35 LMAN is still clustering in weird way,
+and also Astro different cluster. Justin Case
+```{r}
+# prep
+seuObj_all_2 <- subset(seuObj_all_2, subset = Outlier_byRNAfeat == "FALSE")
+DefaultAssay(seuObj_all_2) <- "RNA"
+seuObj_all_2 <- DietSeurat(seuObj_all_2, assays = "RNA")
+
+seuObj_all_2 <- JoinLayers(seuObj_all_2)
+seuObj_all_2[["RNA"]] <- split(seuObj_all_2[["RNA"]], f = seuObj_all_2$orig.ident)
+
+# std process each w/just PCA
+assayUse <- "SCTorigIdent4"
+reductionUse <- paste0("pca.", assayUse)
+
+seuObj_all_2 <- SCTransform(seuObj_all_2, new.assay.name = assayUse, vars.to.regress = c("nCount_RNA", "nFeature_RNA"), return.only.var.genes = T)
+seuObj_all_2 <- RunPCA(seuObj_all_2, assay = assayUse, reduction.name = reductionUse) 
+
+# integrate
+reductionInt <- paste0('integrated.rpca_', reductionUse)
+seuObj_all_2 <- IntegrateLayers(object = seuObj_all_2, method = RPCAIntegration,
+                  orig.reduction = reductionUse, new.reduction = reductionInt,
+                  normalization.method = "SCT", verbose = FALSE)
+
+seuObj_all_2 <- FindNeighbors(seuObj_all_2, dims = 1:30, reduction = reductionInt,
+                            graph.name = c("rpca_nn", "rpca_snn")) %>% 
+FindClusters(resolution = 1, graph.name = paste0("rpca", "_snn"), cluster.name = paste0(reductionInt, "_clusters_", "res1")) 
+seuObj_all_2 <- RunUMAP(seuObj_all_2, dims = 1:30,
+                              reduction = reductionInt,
+                              reduction.name = paste0("umap.", reductionInt))
+
+saveRDS(seuObj_all_2, file = paste0(RDSfiles, "/Integrated_sctByOrig_umap_20240924.rds"))
+
+# seuObj_reDoSct <- seuObj_all_2
+
+```
+
+# Visualize
+```{r}
+DimPlot(seuObj_all_2, group.by = "orig.ident", cols = custom_colors, reduction = paste0("umap.", reductionInt)) + coord_equal()
+DimPlot(seuObj_all_2, group.by = "integrated.rpca_pca.SCTorigIdent3_clusters_res1", reduction = paste0("umap.", reductionInt), label = T) + coord_equal()
+DimPlot(seuObj_all_2, cells.highlight = WhichCells(seuObj_all_2, expression = integrated.rpca_pca.SCTorigIdent3_clusters_res1 == 35), reduction = paste0("umap.", reductionInt)) + coord_equal()
+FeaturePlot(seuObj_all_2, features = c("nFeature_RNA", "nCount_RNA"), max.cutoff = 'q95', coord.fixed = T)
+
+FeaturePlot(seuObj_all_2, features = c("SOX9"), max.cutoff = 'q95', coord.fixed = T)
+
+```
+Cluster 35 is still not cleanly with gluts, 
+HVC and Av Astros still seem to have their own cluster 
+And opc to oligos is gone. So this seems worse,
+sticking to the past one
+
+
+
