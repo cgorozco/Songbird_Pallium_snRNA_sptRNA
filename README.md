@@ -3,7 +3,7 @@ Cellular and spatial transcriptomics of several regions across the zebra finch p
 
 ## Data
 Seurat processed data objects can be accessed at https://cloud.biohpc.swmed.edu/______
-Raw data can be accessed at NBCI GEO in GSE____
+Raw and processed data are available in the Gene Expression Omnibus for the snRNAseq (GSE316328) and for the spatial dataset (GSE316807). 
 
 ## Directories
 comparative - Comparisons between songbird and chicken neurons. Scripts are divided by excitatory or inhibitory neurons at different resolutions of clustering
