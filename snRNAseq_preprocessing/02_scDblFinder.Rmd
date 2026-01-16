@@ -1,0 +1,132 @@
+---
+title: "scDblFinder"
+output: html_notebook
+---
+
+
+# LOAD LIBRARIES
+```{r}
+library(tidyverse)
+library(Seurat)
+library(scDblFinder)
+library(SingleCellExperiment)
+
+```
+
+# SET UP DIRECTORIES
+```{r}
+root_dir <- ("/project/Neuroinformatics_Core/Roberts_lab/s433904")
+
+NFinput_Dir <- paste0(root_dir, "/PalliumEvo_AnalysisR/02_DoubletFinder_AllTele/CB_NF_inputData")
+output_Dir <- paste0(root_dir, "/PalliumEvo_AnalysisR/02_DoubletFinder_AllTele/Output_CB_NF_DF")
+dir.create(output_Dir, showWarnings = F)
+
+```
+
+# COPY OUTPUT NUCLUEAR FRACTION OUTPUT TO INPUT FOLDER
+```{r}
+# change
+copyFrom_dir <- paste0(root_dir, '/PalliumEvo_AnalysisR/01_NuclearFraction_AllTele/Output_CB_NF')
+UsePattern <- "CB_NF.RDS"
+inputDir <- NFinput_Dir
+
+# probably keep the same
+input_list <- list.files(path = copyFrom_dir, pattern = UsePattern, recursive = TRUE)
+
+for (x in input_list) {
+  if(!file.exists(paste(inputDir, basename(x), sep = "/"))){
+    file.copy(from = paste(copyFrom_dir, x, sep = "/"),
+    to = inputDir)
+  }else{
+    print(sprintf("%s already has been copied", x))
+  }
+
+}
+
+```
+
+#--- CREATE FOLDERS IN OUTPUT FOLDER FOR EACH SAMPLE
+```{r}
+NF_list <- 
+  list.files(
+    path = NFinput_Dir,
+    pattern = "_CB_NF.RDS"
+  )
+
+folder_names <- NF_list %>%
+  str_extract("^([^_]+_[^_]+)")  # Regular expression to extract characters before the second underscore
+
+walk(folder_names, ~dir.create(file.path(output_Dir, .x), showWarnings = F))
+
+```
+
+# scDblFinder
+The input to scDblFinder should not include empty droplets, and it might be necessary to remove cells with a very low coverage (e.g. <200 or 500 reads) to avoid errors.
+https://bioconductor.org/packages/devel/bioc/vignettes/scDblFinder/inst/doc/scDblFinder.html#:~:text=the%20default%20expected%20doublet%20rate%20is%20calculated,detect%20doublets%20that%20are%20formed%20by%20the
+
+```{r}
+for (a in folder_names) {
+  print(a)
+  #---
+  # CREATE OUTPUT DIRECTORIES
+  dir.create(file.path(file.path(output_Dir, a), "Figures"), showWarnings = F)
+  figures_dir <- file.path(file.path(output_Dir, a), "Figures")
+  
+  dir.create(file.path(file.path(output_Dir, a), "RDS_files"), showWarnings = F)
+  Rfiles_dir <- file.path(file.path(output_Dir, a), "RDS_files")
+  
+  dir.create(file.path(file.path(output_Dir, a), "Tables"), showWarnings = F)
+  tables_dir <- file.path(file.path(output_Dir, a), "Tables")
+  
+  if (!file.exists(file.path(Rfiles_dir, sprintf("%s_onlySinglets.RDS", a)))){
+    # LOAD DATA AND STD LOWER THRESHOLDING, AS PER DF BEST PRACTICES (TRY INCLUDE DOUBLETS)
+    Obj_postNF <- readRDS(file.path(NFinput_Dir, sprintf("%s_CB_NF.RDS", a)))
+    SeuObj <- subset(Obj_postNF, subset = nFeature_RNA > 100 & percent.mito < 5)
+    
+    #--- scDbl FINDER
+    DefaultAssay(SeuObj) <- "RNA"
+    sce <- as.SingleCellExperiment(SeuObj)
+
+    # calculate doublet rate w/cells excluded before nuclear fraction
+    Obj_preNF <- readRDS(paste0(copyFrom_dir, sprintf("/%s/RDS_files/%s_SCTstdProcess.RDS", a, a)))
+    DoubletPercent <- 0.000008*ncol(Obj_preNF)
+    
+    # scDblFinder
+    sce <- scDblFinder(sce, dbr=DoubletPercent)
+    
+    Obj_DF <- SeuObj
+    Obj_DF$doublet_score <- colData(sce)$scDblFinder.score
+    Obj_DF$doublet_class <- colData(sce)$scDblFinder.class
+    
+    # PLOTS
+    DimPlot(Obj_DF, reduction = "umap", group.by = "doublet_class") + coord_fixed(ratio = 1)
+    ggsave(file.path(figures_dir, sprintf("%s_UMAP_doublets.tiff", a)), width = 9, height = 6)
+    
+    #--- SAVE OUTPUTS
+    # SAVE FINAL OBJECT
+    saveRDS(Obj_DF, file = (file.path(Rfiles_dir, sprintf("%s_labeledDoublets.RDS", a))))
+    
+    # SUBSET WITH ONLY SINGLETS 
+    Obj_onlySinglet <- subset(Obj_DF, subset = doublet_class == "singlet")
+    saveRDS(Obj_onlySinglet, file = (file.path(Rfiles_dir, sprintf("%s_onlySinglets.RDS", a))))
+    
+    # Create a data frame with number of cells after each threshold
+    column_counts <- data.frame(
+      Sample = a,
+      After_CB = ncol(Obj_preNF),
+      After_CB_NF = ncol(Obj_postNF),
+      After_CB_NF_100Feat5MitoThres = ncol(SeuObj),
+      After_CB_NF_100Feat5MitoThres_DF = ncol(Obj_onlySinglet)
+    )
+    
+    write.csv(column_counts, file = file.path(tables_dir, sprintf("%s_CellCountThroughQC_CBoutToDF.csv", a)), row.names = FALSE)
+    
+  } else{
+    print(paste(a, "already had scDblFinder run"))
+  }
+}
+
+```
+
+
+
