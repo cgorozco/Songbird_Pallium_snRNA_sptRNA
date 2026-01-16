@@ -9,9 +9,9 @@ To run the analysis, directories will need to be changed.
 ## Directories
 comparative - Comparisons between songbird and chicken neurons. Scripts are divided by excitatory or inhibitory neurons at different resolutions of clustering
 
-snRNAseq_preprocessing - Processing of snRNA-seq data following CellBender (ambient RNA removal). Includes further processing for nuclear fraction, doublets, batch effects, merging, and integration.
-
 snRNAseq_analysis – Subdirectories for downstream analyses of the processed zebra finch pallium snRNA-seq dataset. Including LISI scoring, classifying excitatory neurons of song-sorround brain regions, LIANA-based cell–cell communication, ...
+
+snRNAseq_preprocessing - Processing of snRNA-seq data following CellBender (ambient RNA removal). Includes further processing for nuclear fraction, doublets, batch effects, merging, and integration.
 
 spatial_RNAseq - Analysis of spatial transcriptomic dataset for clustering, processing, and integrating with snRNAseq dataset
 
