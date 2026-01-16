@@ -36,8 +36,9 @@ dir.create(Tables_dir, showWarnings = F)
 ```{r}
 spatial_all <-
   readRDS(
-    file = "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_Spatial/RDS_files/FromLei_subSpatial_20240916_v4.1.rds"
-  ) # CHANGE TO GENERAL RDS OBJECT
+    file = "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_Spatial/ForRepo/spatialAll_seurat.rds"
+  )
+
 ```
 
 
