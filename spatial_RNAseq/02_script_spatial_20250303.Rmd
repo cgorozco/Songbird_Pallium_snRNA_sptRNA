@@ -1,9 +1,7 @@
----
-title: "Pallium Spatial_after Lei's cleaned clustering"
-output: html_notebook
----
+The script documents normalization, integration, clustering, and visualization steps used to generate the final analyses
+  when using all of the spatial beads.
+This reproduces spatial transcriptomics figures from the manuscript using a preprocessed Seurat object.
 
-Trying to do spatial with all Tele to make dendo
 
 ###===== SET UP
 # LOAD LIBRARIES
@@ -11,21 +9,17 @@ Trying to do spatial with all Tele to make dendo
 library(Seurat)
 library(tidyverse)
 library(readxl)
-library(Matrix)
-library(scrattch.hicat)
 library(patchwork)
-library(pheatmap)
 
 source("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/Functions/commonViz.R")
 
 options(future.globals.maxSize = 100000 * 1024^10)
-
 ```
 
 # SET UP DIRECTORIES
 ```{r}
-setwd('/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_Spatial')
-root_dir <- '/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_Spatial'
+setwd("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_Spatial")
+root_dir <- "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_Spatial"
 
 RDSfiles <- paste0(root_dir, "/RDS_files")
 dir.create(RDSfiles, showWarnings = F)
@@ -35,18 +29,15 @@ dir.create(Figures_dir, showWarnings = F)
 
 Tables_dir <- paste0(root_dir, "/Tables")
 dir.create(Tables_dir, showWarnings = F)
-
 ```
 
 
 # LOAD DATA
 ```{r}
-spatial_all <- 
+spatial_all <-
   readRDS(
-    file = "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_Spatial/RDS_files/FromLei_subSpatial_20240916_v4.1.rds")
-
-spatial_all$LXident <- Idents(spatial_all)
-
+    file = "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_Spatial/RDS_files/FromLei_subSpatial_20240916_v4.1.rds"
+  ) # CHANGE TO GENERAL RDS OBJECT
 ```
 
 
@@ -54,228 +45,170 @@ spatial_all$LXident <- Idents(spatial_all)
 ```{r}
 DefaultAssay(spatial_all) <- "Spatial"
 spatial_all[["Spatial"]] <- split(spatial_all[["Spatial"]], f = spatial_all$Slice)
-spatial_all <- SCTransform(spatial_all, assay = "Spatial",
-                           vars.to.regress = c("nCount_Spatial", "nFeature_Spatial"),
-                            return.only.var.genes = F,
-                            new.assay.name = "SCTbySlice2"
-                            )
+spatial_all <- SCTransform(spatial_all,
+  assay = "Spatial",
+  vars.to.regress = c("nCount_Spatial", "nFeature_Spatial"),
+  return.only.var.genes = F,
+  new.assay.name = "SCTbySlice"
+)
 
 reductionUse <- "pca_sctSlice"
-spatial_all <- RunPCA(spatial_all, assay = "SCTbySlice", reduction.name = reductionUse) 
+spatial_all <- RunPCA(spatial_all, assay = "SCTbySlice", reduction.name = reductionUse)
 
-reductionInt <- paste0('integrated.rpca_', reductionUse)
-spatial_all <- IntegrateLayers(object = spatial_all, method = RPCAIntegration,
-                                orig.reduction = reductionUse, new.reduction = reductionInt,
-                                normalization.method = "SCT", verbose = FALSE)
+reductionInt <- paste0("integrated.rpca_", reductionUse)
+spatial_all <- IntegrateLayers(
+  object = spatial_all, method = RPCAIntegration,
+  orig.reduction = reductionUse, new.reduction = reductionInt,
+  normalization.method = "SCT", verbose = FALSE
+)
 
-spatial_all <- RunUMAP(spatial_all, dims = 1:30, 
-                        reduction = "integrated.rpca_pca_sctSlice", reduction.name = "umap.integrated.rpca") %>%
-  FindNeighbors(dims = 1:30, reduction = "integrated.rpca_pca_sctSlice") 
+spatial_all <- RunUMAP(spatial_all,
+  dims = 1:30,
+  reduction = "integrated.rpca_pca_sctSlice", reduction.name = "umap.integrated.rpca"
+) %>%
+  FindNeighbors(dims = 1:30, reduction = "integrated.rpca_pca_sctSlice")
 
 resolutions <- c(0.05, 0.1, 0.15, 0.2)
 for (res in resolutions) {
   cluster_name <- paste0("SCTbySlice_snn_pall_res.", res)
-  
+
   spatial_all <- FindClusters(spatial_all, resolution = res, cluster.name = cluster_name)
-  
-  SpatialDimPlot(spatial_all, group.by = cluster_name, label = T,
-                 ncol = 2, pt.size.factor = 150, image.alpha = 0.2)
-  ggsave(filename = paste0(Figures_dir, '/02_allTeleIntgr_subCluster/Tele_res', as.character(res), '.tiff'), 
-         bg = "white", width = 12, height = 15)
+
+  SpatialDimPlot(spatial_all,
+    group.by = cluster_name, label = T,
+    ncol = 2, pt.size.factor = 150, image.alpha = 0.2
+  )
+  ggsave(
+    filename = paste0(Figures_dir, "/02_allTeleIntgr_subCluster/Tele_res", as.character(res), ".tiff"),
+    bg = "white", width = 12, height = 15
+  )
 }
 
 Idents(spatial_all) <- "SCTbySlice_snn_pall_res.0.05"
 for (clust in unique(Idents(spatial_all))) {
-  spatial_all <- FindSubCluster(spatial_all, graph.name = "SCTbySlice_snn",
-                                cluster = clust, resolution = 0.025, subcluster.name = paste0("sub", clust))
+  spatial_all <- FindSubCluster(spatial_all,
+    graph.name = "SCTbySlice_snn",
+    cluster = clust, resolution = 0.025, subcluster.name = paste0("sub", clust)
+  )
   Idents(spatial_all) <- paste0("sub", clust)
 }
 SpatialDimPlot(spatial_all, ncol = 2, pt.size.factor = 150, image.alpha = 0.2)
 
 for (i in levels(spatial_all@active.ident)) {
   print(i)
-  SpatialDimPlot(spatial_all, cells.highlight = WhichCells(spatial_all, idents = i),
-               ncol = 2, pt.size.factor = 150, image.alpha = 0.2)
-  ggsave(filename = sprintf('%s/02_allTeleIntgr_subCluster/res05_subCluster025/allTele_cluster_%s.tiff', Figures_dir, i), 
-       bg = "white", width = 10, height = 15)
+  SpatialDimPlot(spatial_all,
+    cells.highlight = WhichCells(spatial_all, idents = i),
+    ncol = 2, pt.size.factor = 150, image.alpha = 0.2
+  )
+  ggsave(
+    filename = sprintf("%s/02_allTeleIntgr_subCluster/res05_subCluster025/allTele_cluster_%s.tiff", Figures_dir, i),
+    bg = "white", width = 10, height = 15
+  )
 }
 
 saveRDS(spatial_all, file = paste0(RDSfiles, "/spatialAll_integrated_20250207.rds"))
-
 ```
-I think I will get just the pallium beads then subcluster those. 
-The non-Pallium will get their previous cluter ident, 
-     but the pallium will have new one
-     --> this did not work well, cleaner clusters the other way
-     
-Will just do bead info, and manually collapse or split clusters
+
 
 
 #===== IF ABOVE ALREADY RAN ====================================================
 ```{r}
 spatial_all <- readRDS(file = paste0(RDSfiles, "/spatialAll_integrated_20250207.rds"))
 spatial_all <- JoinLayers(spatial_all, assay = "Spatial")
-
 ```
-
-
-# MANUALLY CALL CLUSTERS, COLLAPSE AND SPLIT
-No longer using this block (I think)
-```{r}
-# collapse small cluster
-spatial_all$ClustersUse <- as.character(Idents(spatial_all))
-spatial_all$ClustersUse <- ifelse(spatial_all$ClustersUse %in% c("0_0", "0_1"), "0", spatial_all$ClustersUse)
-
-# split by pallium
-beadsInPall <- readRDS(file = paste0(Tables_dir, "/PallBeads_meta_usingLXclustersNmanual.rds"))
-spatial_all <- AddMetaData(spatial_all, beadsInPall)
-spatial_all$palliumBeads <- ifelse(is.na(spatial_all$palliumBeads), "nonPall", "Pall")
-spatial_all$ClustersUse.Pall <- paste(spatial_all$ClustersUse, spatial_all$palliumBeads, sep = ".")
-
-Idents(spatial_all) <- "ClustersUse.Pall"
-for (i in levels(spatial_all@active.ident)) {
-  print(i)
-  SpatialDimPlot(spatial_all, cells.highlight = WhichCells(spatial_all, idents = i),
-               ncol = 2, pt.size.factor = 150, image.alpha = 0.2)
-  ggsave(filename = sprintf('%s/02_allTeleIntgr_subCluster/res05_subCluster025_manual/allTele_cluster_%s.tiff', Figures_dir, i), 
-       bg = "white", width = 10, height = 15)
-}
-
-```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 #- Visualize w/all brain
 ```{r}
-beadsInPall <- readRDS(file = paste0(Tables_dir, "/PallBeads_meta_usingLXclustersNmanual.rds"))
-spatial_all <- AddMetaData(spatial_all, beadsInPall)
 spatial_all$palliumBeads <- ifelse(is.na(spatial_all$palliumBeads), "nonPall", "Pall")
 
 spatial_all$Pallium <- ifelse(spatial_all$sub5 %in% c("0_0", "2_2", "3_0", "4_0", "4_1"), "yes", "no")
-spatial_all$Pallium <- ifelse(spatial_all$sub5 %in%  c("0_1", "1_0"), "both", spatial_all$Pallium)
-spatial_all$sub5_split <- ifelse(spatial_all$sub5 %in%  c("0_1", "1_0"), paste(spatial_all$sub5, spatial_all$palliumBeads), spatial_all$sub5)
+spatial_all$Pallium <- ifelse(spatial_all$sub5 %in% c("0_1", "1_0"), "both", spatial_all$Pallium)
+spatial_all$sub5_split <- ifelse(spatial_all$sub5 %in% c("0_1", "1_0"), paste(spatial_all$sub5, spatial_all$palliumBeads), spatial_all$sub5)
 
 DimPlot(spatial_all, group.by = "sub5_split")
 SpatialDimPlot(spatial_all, group.by = "sub5_split", ncol = 2, pt.size.factor = 150, image.alpha = 0.2)
 
-metaColor <- FetchData(spatial_all, vars = c("Pallium", "sub5_split")) %>% unique() %>% arrange(Pallium)
+metaColor <- FetchData(spatial_all, vars = c("Pallium", "sub5_split")) %>%
+  unique() %>%
+  arrange(Pallium)
 metaColor$cols <- c("#a5a082", "#c5a082", "#a5a000", "#d4ac0d", colorRampPalette(c("#bdbdbd", "#212121"))(6), colorRampPalette(c("#1a5276", "#aed6f1"))(5))
 
 color_mapping <- setNames(metaColor$cols, metaColor$sub5_split)
 
 DimPlot(spatial_all, group.by = "sub5_split", cols = color_mapping) + coord_equal()
 
-SpatialDimPlot(spatial_all, group.by = "sub5_split", ncol = 2, pt.size.factor = 150, image.alpha = 0.2,
-               cols = color_mapping)
-ggsave(filename = paste0(Figures_dir, '/03_FigsAll/all_subClusters_Cols.svg'), 
-       bg = "white", width = 10, height = 15)
+SpatialDimPlot(spatial_all,
+  group.by = "sub5_split", ncol = 2, pt.size.factor = 150, image.alpha = 0.2,
+  cols = color_mapping
+)
+ggsave(
+  filename = paste0(Figures_dir, "/03_FigsAll/all_subClusters_Cols.svg"),
+  bg = "white", width = 10, height = 15
+)
 
-SpatialDimPlot(spatial_all, group.by = "sub5_split", ncol = 2, pt.size.factor = 150, image.alpha = 0.2,
-               label = T, label.size = 3,
-               cols = color_mapping)
-ggsave(filename = paste0(Figures_dir, '/03_FigsAll/all_subClusters_sub5split_Cols_wLabel.svg'), 
-       bg = "white", width = 10, height = 15)
+SpatialDimPlot(spatial_all,
+  group.by = "sub5_split", ncol = 2, pt.size.factor = 150, image.alpha = 0.2,
+  label = T, label.size = 3,
+  cols = color_mapping
+)
+ggsave(
+  filename = paste0(Figures_dir, "/03_FigsAll/all_subClusters_sub5split_Cols_wLabel.svg"),
+  bg = "white", width = 10, height = 15
+)
 
 Idents(spatial_all) <- "sub5_split"
 for (i in levels(spatial_all@active.ident)) {
   print(i)
-  SpatialDimPlot(spatial_all, cells.highlight = WhichCells(spatial_all, idents = i),
-               ncol = 2, pt.size.factor = 150, image.alpha = 0.2)
-  ggsave(filename = sprintf('%s/02_allTeleIntgr_subCluster/sub5_split/allTele_cluster_%s.tiff', Figures_dir, i), 
-       bg = "white", width = 10, height = 15)
+  SpatialDimPlot(spatial_all,
+    cells.highlight = WhichCells(spatial_all, idents = i),
+    ncol = 2, pt.size.factor = 150, image.alpha = 0.2
+  )
+  ggsave(
+    filename = sprintf("%s/02_allTeleIntgr_subCluster/sub5_split/allTele_cluster_%s.tiff", Figures_dir, i),
+    bg = "white", width = 10, height = 15
+  )
 }
 
-u1 <- DimPlot(spatial_all, group.by = "sub5_split", shuffle = T,  cols = color_mapping) +
+u1 <- DimPlot(spatial_all, group.by = "sub5_split", shuffle = T, cols = color_mapping) +
   NoLegend() +
   coord_equal() +
-  ggtitle("Cluster") + 
+  ggtitle("Cluster") +
   NoAxes()
 
-ggsave(paste0(Figures_dir, '/03_FigsAll/umap_subClusters_Cols.svg'), plot = u1,
-     bg = "transparent", width = 8, height = 7)
-
+ggsave(paste0(Figures_dir, "/03_FigsAll/umap_subClusters_Cols.svg"),
+  plot = u1,
+  bg = "transparent", width = 8, height = 7
+)
 ```
 
 # Genes to plot for for fig 1
 ```{r}
-#- Markers
-spatial_DEGs <- FindAllMarkers(spatial_all,
-                               assay = "SCTbySlice", 
-                               logfc.threshold = 1,
-                               only.pos = T,
-                               recorrect_umi = F)
-
-spatial_DEGs_roc <- FindAllMarkers(spatial_all,
-                               assay = "SCTbySlice", 
-                               logfc.threshold = 1,
-                               only.pos = T,
-                               recorrect_umi = F,
-                               test.use = "roc")
-
-genesPlot <- c("CNTNAP2", "NR2F2", "GABRG3", "TCF7L2", "CHAT", "GATA2", "ADORA2A",
-  "DRD2",   "DRD1", "PENK", "SATB1", "DACH2", "ETV1", "TSHZ3", "SATB2",
-  "PVALB"
-  )
-
-# genesPlot <- rownames(seuObj)[grepl("^KCNJ", rownames(seuObj))] # can use to look for specific genes
-  
-for (gene in genesPlot) {
-  SpatialFeaturePlot(spatial_all, features = gene,
-                     ncol = 2, pt.size.factor = 150, image.alpha = 0.2) &
-  scale_fill_viridis_c(option = "magma")
-  ggsave(filename = sprintf('%s/03_FigsAll/Genes/all_subClusters_%s.svg', Figures_dir, gene),
-         bg = "white", width = 10, height = 15)
-  ggsave(filename = sprintf('%s/03_FigsAll/Genes/all_subClusters_%s.tiff', Figures_dir, gene), 
-     bg = "white", width = 10, height = 15)
-}
-
 #- Make Fig 1 Plot
 PlotList <- list()
-genes4Fig <- c("TCF7L2", "FOXG1", "DRD1", 
-               "NR2F2", "TBR1", 
-               "ETV1", "DACH2", "SATB2", 
-               "PVALB"
-               )
+genes4Fig <- c(
+  "TCF7L2", "FOXG1", "DRD1",
+  "NR2F2", "TBR1",
+  "ETV1", "DACH2", "SATB2",
+  "PVALB"
+)
 sliceUse <- "slice13"
 colorUse <- "magma"
 
 for (geneUse in genes4Fig) {
-  PlotList[[geneUse]] <- SpatialFeaturePlot(spatial_all, features = geneUse,
-                   images = sliceUse,
-                   ncol = 2, pt.size.factor = 150, image.alpha = 0.2) +
+  PlotList[[geneUse]] <- SpatialFeaturePlot(spatial_all,
+    features = geneUse,
+    images = sliceUse,
+    ncol = 2, pt.size.factor = 150, image.alpha = 0.2
+  ) +
     scale_fill_viridis_c(option = colorUse) + NoLegend() + ggtitle(geneUse)
 }
 
 wrap_plots(PlotList, ncol = 3) & theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
-ggsave(filename = sprintf('%s/10_PaperFigs/MarkersFeatMap_%s_%s.svg', Figures_dir, sliceUse, colorUse), 
-       bg = "white", width = 5, height = 3.5)
-
-
+ggsave(
+  filename = sprintf("%s/10_PaperFigs/MarkersFeatMap_%s_%s.svg", Figures_dir, sliceUse, colorUse),
+  bg = "white", width = 5, height = 3.5
+)
 ```
 -- from tosches
 ZBTB20, SATB1, DACH2, and ETV1 (ER81)
@@ -285,32 +218,33 @@ including the known DVR-specific transcription factor gene NR2F2
 SATB2 has been reported to represent a mesopallial marker (33)
 
 -- Evolutionary convergence of sensory circuits in the pallium of amniotes
-TBR1, pallium marker
-
+TBR1: pallium marker
 FOXG1: telencephalon marker
 
-#-- Picking pallium beads
+#-- Picking pallium clusters
 ```{r}
 #- adding pallium info
-spatial_all <- AddMetaData(spatial_all, metadata = beadsInPall)  
+spatial_all <- AddMetaData(spatial_all, metadata = beadsInPall)
 SpatialDimPlot(spatial_all, group.by = "palliumBeads", ncol = 2, pt.size.factor = 150, image.alpha = 0.2)
 spatial_all$cluster_pall <- paste0(spatial_all$sub5, spatial_all$palliumBeads)
 
 Idents(spatial_all) <- "cluster_pall"
 for (i in levels(spatial_all@active.ident)) {
   print(i)
-  SpatialDimPlot(spatial_all, cells.highlight = WhichCells(spatial_all, idents = i),
-               ncol = 2, pt.size.factor = 150, image.alpha = 0.2)
-  ggsave(filename = sprintf('%s/PalliumNCluster/cluster%s.tiff', Figures_dir, i), 
-       bg = "white", width = 10, height = 15)
+  SpatialDimPlot(spatial_all,
+    cells.highlight = WhichCells(spatial_all, idents = i),
+    ncol = 2, pt.size.factor = 150, image.alpha = 0.2
+  )
+  ggsave(
+    filename = sprintf("%s/PalliumNCluster/cluster%s.tiff", Figures_dir, i),
+    bg = "white", width = 10, height = 15
+  )
 }
-
 ```
 
 
 #-- AVG EXPRESSION PLOT
 # cluster naming
-I think naming them will help with getting less confused.
 ```{r}
 spatial_all$sub5_split_name <- case_when(
   spatial_all$sub5_split == "0_0" ~ "Nido&Hyper",
@@ -322,15 +256,13 @@ spatial_all$sub5_split_name <- case_when(
   spatial_all$sub5_split == "3_0" ~ "Meso",
   spatial_all$sub5_split == "4_0" ~ "Arco",
   spatial_all$sub5_split == "4_1" ~ "RA",
-  
   spatial_all$sub5_split == "1_0 nonPall" ~ "NonPall-1",
   spatial_all$sub5_split == "6_0" ~ "NonPall-2",
   spatial_all$sub5_split == "1_1" ~ "NonPall-3",
   spatial_all$sub5_split == "1_2" ~ "Thal-1",
   spatial_all$sub5_split == "0_1 nonPall" ~ "Thal-2",
-  spatial_all$sub5_split == "5_0"  ~ "Thal-3",
+  spatial_all$sub5_split == "5_0" ~ "Thal-3",
 )
-
 ```
 
 
@@ -340,24 +272,26 @@ genesPlot <- c(genes4Fig, "MBP")
 genesPlot <- genesPlot[!grepl("TCF7L2", genesPlot)]
 genesPlot <- factor(genesPlot, levels = genesPlot)
 
-clustAvg <- AverageExpression(object = spatial_all, assays = "SCTbySlice", 
-                              features = genesPlot, layer = "scale.data", group.by = 'sub5_split_name',
-                              return.seurat = T)
+clustAvg <- AverageExpression(
+  object = spatial_all, assays = "SCTbySlice",
+  features = genesPlot, layer = "scale.data", group.by = "sub5_split_name",
+  return.seurat = T
+)
 
 
 clustersPlot <- c(
-  "SubPall", "AreaX", 
-                  "Arco",  "RA", "Nido&Hyper", "HVC", "Meso"
-                  , "PallBorders-1", "PallBorders-2"
-                )
-#  c("g4-0", "g4-1", "g2-2", "g0-0", "g3-0", "g0-1", "g1-0")
+  "SubPall", "AreaX",
+  "Arco", "RA", "Nido&Hyper", "HVC", "Meso",
+  "PallBorders-1", "PallBorders-2"
+)
 
 htMap <- avgExpr_heatmap(clustAvg, genesPlot, clustersUse = "sub5_split_name", colOpt = "magma", scaleOpt = T)
-htMap2 <- htMap + ylim(clustersPlot) 
+htMap2 <- htMap + ylim(clustersPlot)
 
-ggsave(filename = paste0(Figures_dir, "/10_PaperFigs/Tele_AvgExpr.svg"), plot = htMap2,
-       width = 3.5, height = 3, bg = "white")
-
+ggsave(
+  filename = paste0(Figures_dir, "/10_PaperFigs/Tele_AvgExpr.svg"), plot = htMap2,
+  width = 3.5, height = 3, bg = "white"
+)
 ```
 
 #-- for figure 1 and supp2
@@ -367,148 +301,55 @@ metaColor_2 <- left_join(metaColor, toJoin)
 color_mapping <- setNames(metaColor_2$cols, metaColor_2$sub5_split_name)
 write_csv(metaColor_2, file = paste0(Tables_dir, "/paperTables/spatialClusterNamingAndColors.csv"))
 
-DimPlot(spatial_all, group.by = "sub5_split_name", cols = color_mapping,
-        label = T, repel = T, label.size =  5, label.color = "#1eb4aa") + coord_equal()
-ggsave(filename = paste0(Figures_dir, '/10_PaperFigs/umap_telenClusters.svg'), 
-       bg = "white", width = 8, height = 5)
+DimPlot(spatial_all,
+  group.by = "sub5_split_name", cols = color_mapping,
+  label = T, repel = T, label.size = 5, label.color = "#1eb4aa"
+) + coord_equal()
+ggsave(
+  filename = paste0(Figures_dir, "/10_PaperFigs/umap_telenClusters.svg"),
+  bg = "white", width = 8, height = 5
+)
 
 #-- to show clusters across all slices
 # spatial_all_JIC <- spatial_all
 spatial_all@images <- spatial_all@images[c("slice24", "slice13", "slice23", "slice12", "slice21", "slice11", "slice20")]
 
-sptDimPlt <- SpatialDimPlot(spatial_all, group.by = "sub5_split_name", ncol = 7, pt.size.factor = 150, image.alpha = 0.2,
-             cols = color_mapping) & NoLegend() & scale_x_reverse()
-ggsave(filename = paste0(Figures_dir, '/10_PaperFigs/allTeleNslices_subClusters_Cols.svg'), plot = sptDimPlt,
-       bg = "white", width = 20, height = 3)
+sptDimPlt <- SpatialDimPlot(spatial_all,
+  group.by = "sub5_split_name", ncol = 7, pt.size.factor = 150, image.alpha = 0.2,
+  cols = color_mapping
+) & NoLegend() & scale_x_reverse()
+ggsave(
+  filename = paste0(Figures_dir, "/10_PaperFigs/allTeleNslices_subClusters_Cols.svg"), plot = sptDimPlt,
+  bg = "white", width = 20, height = 3
+)
 
 #-- show region marker genes across all slices
-genes4SuppFig <- c("FOXG1", "TCF7L2", 
-                   "DRD1", 
-                   "NR2F2", "TBR1", 
-                   "ETV1", "DACH2", "SATB2", 
-                   "PVALB", "MBP"
-                   )
+genes4SuppFig <- c(
+  "FOXG1", "TCF7L2",
+  "DRD1",
+  "NR2F2", "TBR1",
+  "ETV1", "DACH2", "SATB2",
+  "PVALB", "MBP"
+)
 
 PlotList_supp <- list()
 for (geneUse in genes4SuppFig) {
-  PlotList_supp[[geneUse]] <- SpatialFeaturePlot(spatial_all, features = geneUse,
-                                                 ncol = 7, pt.size.factor = 150, image.alpha = 0.2) &
+  PlotList_supp[[geneUse]] <- SpatialFeaturePlot(spatial_all,
+    features = geneUse,
+    ncol = 7, pt.size.factor = 150, image.alpha = 0.2
+  ) &
     scale_fill_viridis_c(option = "magma") & NoLegend() & ggtitle(geneUse) & scale_x_reverse()
 }
 
 PlotList_supp_plots <- wrap_plots(PlotList_supp, ncol = 1) & theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
-ggsave(filename = sprintf('%s/10_PaperFigs/Supp/MarkersFeatMap_AllTeleNSlices.svg', Figures_dir), plot = PlotList_supp_plots,
-       bg = "white", width = 20, height = 3*length(genes4SuppFig))
-
-
+ggsave(
+  filename = sprintf("%s/10_PaperFigs/Supp/MarkersFeatMap_AllTeleNSlices.svg", Figures_dir), plot = PlotList_supp_plots,
+  bg = "white", width = 20, height = 3 * length(genes4SuppFig)
+)
 ```
 
 
 ```{r}
 saveRDS(spatial_all, file = paste0(RDSfiles, "/02_script_output/spatialAll_seurat_20260716.rds"))
 ```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-#####================ STUFF BELOW HERE DID NOT WORK ======================######
-```{r}
-#-- smoothing
-spatial_all_2 <- SmoothSpatialIdents4Merge(spatial_all)
-
-SpatialDimPlot(spatial_all_2, 
-               ncol = 2, pt.size.factor = 150, image.alpha = 0.2)
-for (i in levels(spatial_all_2@active.ident)) {
-  print(i)
-  SpatialDimPlot(spatial_all_2, cells.highlight = WhichCells(spatial_all_2, idents = i),
-               ncol = 2, pt.size.factor = 150, image.alpha = 0.2)
-  ggsave(filename = sprintf('%s/allTeleIntgr/smoothed/allTele_cluster_%s.tiff', Figures_dir, i), 
-       bg = "white", width = 10, height = 15)
-}
-
-```
- I'm not convinced with the smoothing, I'll just do hierchechal clustering 
- w/non smoothed
-
-###== DENDRO
-#- Subclustered
-```{r}
-avgExpr_df <- as.data.frame(AverageExpression(spatial_all, assays = "SCTbySlice", layer = "data"))
-colnames(avgExpr_df) <- gsub("SCTbySlice\\.g", "", colnames(avgExpr_df))
-avgExpr_df_filt <- filter(avgExpr_df, rownames(avgExpr_df) %in% spatial_all@assays[["SCTbySlice"]]@var.features)
-
-avgExpr_dend <- build_dend(avgExpr_df_filt)
-plot(avgExpr_dend$dend)
-
-
-
-#- w/seurats
-sptVarFeats <- FindSpatiallyVariableFeatures(spatial_all, assay = "SCTbySlice", features = VariableFeatures(spatial_all),
-    selection.method = "moransi")
-
-spatial_dendro <- BuildClusterTree(spatial_all, reduction = "umap.integrated.rpca")
-
-PlotClusterTree(spatial_dendro)
-
-```
- This subclustering is not doing well w/hierarchechal clustering.
- Maybe just do what I was doing originally
- 
-```{r}
-Idents(spatial_all) <- "SCTbySlice_snn_pall_res.0.1"
-
-spatial_all <- BuildClusterTree(spatial_all, reduction = "umap.integrated.rpca")
-
-DimPlot(spatial_all, group.by = "SCTbySlice_snn_pall_res.0.05", label = T)
-PlotClusterTree(spatial_all)
-
-```
-
-###--- this is it
-Use res 0.1 which has HVC seperate and smooth it out, then color by BG and not
-```{r}
-Idents(spatial_all) <- "SCTbySlice_snn_pall_res.0.1"
-dimOG <- DimPlot(spatial_all, group.by = "SCTbySlice_snn_pall_res.0.1", label = T)
-dimOG + coord_equal()
-
-spatial_all_2 <- SmoothSpatialIdents4Merge(spatial_all)
-DimPlot(spatial_all_2, group.by = "SCTbySlice_snn_pall_res.0.1", label = T)
-
-for (i in levels(spatial_all_2@active.ident)) {
-  print(i)
-  SpatialDimPlot(spatial_all_2, cells.highlight = WhichCells(spatial_all_2, idents = i),
-               ncol = 2, pt.size.factor = 150, image.alpha = 0.2)
-  ggsave(filename = sprintf('%s/allTeleIntgr/smoothed2/allTele_cluster_%s.tiff', Figures_dir, i), 
-       bg = "white", width = 10, height = 15)
-}
-
-```
-
-
-custom_colors <- c("0_0" = "#4682B4", # nidoHyper 4682B4
-                   "0_1" = "black",
-                   "1_0" = "#c8b25a",  
-                   "1_2" = "#808085",  
-                   "2_0" = "#808080", 
-                   "2_1" = "darkgrey", 
-                   "2_2" = "#87CEEB", 
-                   "3_0" = "#4169E1",  
-                   "4_0" = "#6495ED",  
-                   "4_1" = "#ADD8E6",  
-                   "5_0" = "#3d3b30",  
-                   "6_0" = "grey") 
 
