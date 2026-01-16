@@ -1,0 +1,251 @@
+---
+title: "Intronic Read Ratio to be modified"
+output: html_notebook
+---
+
+Trying in the published HVC and RA dataset...
+
+# LOAD LIBRARIES
+```{r}
+library(tidyverse)
+library(Seurat)
+```
+
+# SET UP DIRECTORIES
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "/project/Neuroinformatics_Core/Roberts_lab/s433904")
+root_dir <- "/project/Neuroinformatics_Core/Roberts_lab/s433904"
+
+CBinput_Dir <- paste0(root_dir, "/PalliumEvo_AnalysisR/01_NuclearFraction_AllTele/CB_inputData")
+NFinput_Dir <- paste0(root_dir, "/PalliumEvo_AnalysisR/01_NuclearFraction_AllTele/NF_inputData")
+
+output_Dir <- paste0(root_dir, "/PalliumEvo_AnalysisR/01_NuclearFraction_AllTele/Output_CB_NF")
+```
+
+# COPY INPUT DATASETS NEEDED
+
+Doing the manually since probably faster, 
+  for both Cell Bender and Nuclear Fraction Data
+
+```{r}
+# #-- Copy cell bender output
+# needTo_copy <- "Yes"
+# xtraReads <-  "No"
+#
+# if (needTo_copy == "Yes"){
+#   ## COPY OVER CELLBENDER DATA FROM OTHER SAMPLES
+#   CB_list <- list.files(path = '/project/Neuroinformatics_Core/Roberts_lab/s433904/TelEvo/Published_HVCandRA', pattern = "filtered.h5", recursive = TRUE)
+#   CB_list <- CB_list[match(unique(basename(CB_list)), basename(CB_list))]
+#
+#   prefix <- "Pub_"
+#   for (x in CB_list) {
+#     file.copy(from = sprintf("./TelEvo/Neuroinformatics_Core/Roberts_lab/s433904/TelEvo/Published_HVCandRA/%s", x),
+#               to = file.path(CBinput_Dir, paste0(prefix, basename(x))))
+#               }
+#
+#   ## THEN COPY THE ONES THAT HAD EXTRA READS RUNS AND OVERWRITE
+#   if (xtraReads == "Yes"){
+#     CB_list_2 <- list.files(path = './TelEvo/XtraReadsRuns', pattern = "filtered.h5", recursive = TRUE)
+#
+#     for (x in CB_list_2) {
+#       file.copy(from = sprintf("./TelEvo/XtraReadsRuns/%s", x),
+#                 to = CBinput_Dir,
+#                 overwrite = TRUE)
+#     }
+#   }
+#
+#
+# }
+```
+
+###===== PROCESSING OF REMOVING LOW NF CLUSTERS =============================###
+```{r}
+### FILES NEEDED FOR THE LOOP THAT ONLY NEED TO BE RAN ONCE
+Mito_genes <-
+  c("ATP6", "ATP8", "COX1", "COX2", "COX3", "CYTB", "ND1", "ND2", "ND3", "ND4", "ND4L", "ND5", "ND6")
+
+CanMarkers <- c(
+  "SLC17A6", # glut cells,
+  "NR2E1", # adult NSCs
+  "SOX4", # neuronally committed precursors
+  "DCX", # migrating neuroblasts
+  "GAD1", # gaba cells
+  "PDGFRA", # OPCs
+  "MBP", # Oligos
+  "LRIG1", # Astro
+  "CSF1R", # Microglia
+  "FLT1" # Endothelial
+)
+
+CB_list <-
+  list.files(
+    path = CBinput_Dir,
+    pattern = "filtered.h5",
+    recursive = TRUE
+  )
+
+folder_names <- CB_list %>%
+  str_extract("^([^_]+_[^_]+)") # Regular expression to extract characters before the second underscore
+folder_names <- folder_names[!grepl("Area|Gp|Mst|Lst", folder_names)]
+walk(folder_names, ~ dir.create(file.path(output_Dir, .x)))
+
+# Will not threshold low quality cells to hopefully get bad quality cells clustering (only visualize metrics)
+RunStdProc <- "yes"
+
+for (a in folder_names) {
+  print(a)
+  #---
+  # CREATE OUTPUT DIRECTORIES
+  dir.create(file.path(file.path(output_Dir, a), "Figures"))
+  figures_dir <- file.path(file.path(output_Dir, a), "Figures")
+
+  dir.create(file.path(file.path(output_Dir, a), "RDS_files"))
+  Rfiles_dir <- file.path(file.path(output_Dir, a), "RDS_files")
+
+  dir.create(file.path(file.path(output_Dir, a), "Tables"))
+  tables_dir <- file.path(file.path(output_Dir, a), "Tables")
+
+  if (RunStdProc == "yes" && !file.exists(file.path(output_Dir, a, sprintf("Figures/%s_UMAP.tiff", a)))) {
+    #--- LOAD CB DATA
+    Data1 <-
+      Read10X_h5(
+        file = file.path(
+          CBinput_Dir,
+          sprintf("%s_raw_feature_bc_matrix.h5_CellBender_Out_filtered.h5", a)
+        ),
+        use.names = TRUE
+      )
+
+    Obj_preQC <- CreateSeuratObject(counts = Data1, project = a, min.features = 1)
+
+    #--- ADD MITO DATA
+    Obj_preQC[["percent.mito"]] <-
+      PercentageFeatureSet(
+        Obj_preQC,
+        features = Mito_genes
+      )
+
+    #---
+    # DIAGNOSTIC PLOTS
+    VlnPlot(
+      Obj_preQC,
+      features = c(
+        "nFeature_RNA",
+        "nCount_RNA",
+        "percent.mito"
+      ),
+      pt.size = 0
+    )
+    ggsave(file.path(figures_dir, sprintf("%s_ViolinPlots_preQC.tiff", a)))
+
+    FeatureScatter(
+      Obj_preQC,
+      feature1 = "nCount_RNA",
+      feature2 = "percent.mito"
+    )
+    ggsave(file.path(figures_dir, sprintf("%s_QC1Plot_preQC.tiff", a)))
+
+    FeatureScatter(
+      Obj_preQC,
+      feature1 = "nCount_RNA",
+      feature2 = "nFeature_RNA"
+    )
+    ggsave(file.path(figures_dir, sprintf("%s_QC2Plot_preQC.tiff", a)))
+
+    #--- STANDARD PROCESSING
+    # no subsetting for quality
+
+    Obj_postNorm <- Obj_preQC %>%
+      SCTransform() %>%
+      RunPCA(npcs = 50) %>%
+      FindNeighbors(dims = 1:30) %>%
+      RunUMAP(dims = 1:30) %>%
+      FindClusters(resolution = 2)
+
+    saveRDS(Obj_postNorm, file.path(Rfiles_dir, sprintf("%s_SCTstdProcess.RDS", a)))
+
+    ElbowPlot(Obj_postNorm, ndims = 100)
+    ggsave(file.path(figures_dir, sprintf("%s_ElbowPlot.tiff", a)))
+
+    DimPlot(Obj_postNorm, label = TRUE) +
+      coord_fixed(ratio = 1) +
+      theme(legend.position = "none")
+    ggsave(file.path(figures_dir, sprintf("%s_UMAP.tiff", a)))
+  } else {
+    Obj_postNorm <- readRDS(file.path(Rfiles_dir, sprintf("%s_SCTstdProcess.RDS", a)))
+  }
+
+  #--- NUCLEAR FRACTION (NF) METADATA CLEANING
+  # LOAD METADATA AND ADD TO OBJECT
+  load(file.path(
+    NFinput_Dir,
+    sprintf("%s_IntronicReadRatios.Rda", a)
+  ))
+
+  Obj_postNorm <- AddMetaData(object = Obj_postNorm, metadata = nf1, col.name = "nuclear_fraction")
+
+  # PLOTS BEFORE CLEANING
+  VlnPlot(Obj_postNorm, pt.size = 0, features = "nuclear_fraction")
+  ggsave(file.path(figures_dir, sprintf("%s_PreNFcluster_VlnPlot_NuclearFrac.tiff", a)))
+
+  VlnPlot(Obj_postNorm, pt.size = 0, features = "nCount_RNA", y.max = 10000)
+  ggsave(file.path(figures_dir, sprintf("%s_PreNFcluster_VlnPlot_nUMI.tiff", a)))
+
+  VlnPlot(Obj_postNorm, pt.size = 0, features = "nFeature_RNA", y.max = 5000)
+  ggsave(file.path(figures_dir, sprintf("%s_PreNFcluster_VlnPlot_nFeature.tiff", a)))
+
+  #---
+  # GET RID OF LOW NUCLEAR FRACTION CLUSTERS
+  Obj_postNorm[["NF_clusters"]] <- Idents(object = Obj_postNorm)
+  MetaData <- Obj_postNorm[[c("nuclear_fraction", "NF_clusters")]]
+  MetaTable <-
+    MetaData %>%
+    group_by(NF_clusters) %>%
+    summarize(Mean = mean(nuclear_fraction, na.rm = T), Median = median(nuclear_fraction, na.rm = T))
+
+
+  # IDENTIFY CLUSTERS WITH AVG. AND MEDIAN INTRONIC READS RATIO LOWER THAN 0.5
+  keep <- subset(MetaTable, Mean > 0.5 & Median > 0.5, select = NF_clusters)
+  keep1 <- keep$NF_clusters
+
+  # SUBSET WITH A MEAN & MEDIAN OF INTRONIC READS >0.5
+  Obj_highNF <- subset(Obj_postNorm, idents = keep1)
+
+  if (!file.exists(file.path(Rfiles_dir, sprintf("%s_CB_NF.RDS", a)))) {
+    write.csv(MetaTable, file = file.path(tables_dir, sprintf("%s_PreNF_clustersNF_MeanMed.csv", a)), row.names = FALSE)
+    saveRDS(Obj_highNF, file.path(Rfiles_dir, sprintf("%s_CB_NF.RDS", a)))
+  }
+
+
+  # MARK CLUSTERS TO REMOVE
+  Obj_postNorm$NF_clustDrops <- "Dropped"
+  mark_cells <- Obj_postNorm$NF_clusters %in% keep1
+  Obj_postNorm$NF_clustDrops[mark_cells] <- "Accepted"
+
+  # PLOTS
+  FeatureScatter(
+    Obj_postNorm,
+    feature1 = "nuclear_fraction", feature2 = "nCount_RNA", group.by = "NF_clustDrops"
+  ) + ggtitle(a)
+  ggsave(file.path(figures_dir, sprintf("ScatterPlot_NF_nCount_%s.tiff", a)), bg = "white", width = 10, height = 9)
+
+  FeatureScatter(
+    Obj_postNorm,
+    feature1 = "nuclear_fraction", feature2 = "nFeature_RNA", group.by = "NF_clustDrops"
+  ) + ggtitle(a)
+  ggsave(file.path(figures_dir, sprintf("ScatterPlot_NF_nFeat_%s.tiff", a)), bg = "white", width = 10, height = 9)
+
+
+  for (gene in CanMarkers) {
+    FeatureScatter(
+      Obj_postNorm,
+      feature1 = "nuclear_fraction", feature2 = gene, group.by = "NF_clustDrops"
+    ) + ggtitle(a)
+    ggsave(file.path(figures_dir, sprintf("ScatterPlot_NF_%s_%s.tiff", a, gene)), bg = "white", width = 10, height = 9)
+  }
+
+
+  VlnPlot(Obj_postNorm, features = CanMarkers, group.by = "NF_clustDrops", ncol = 1)
+  ggsave(file.path(figures_dir, sprintf("VlnPlot_NF_CanMarkers_%s.tiff", a)), bg = "white", width = 6, height = 30)
+}
+```
