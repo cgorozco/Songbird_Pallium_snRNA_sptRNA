@@ -1,0 +1,147 @@
+---
+title: "Merging all individual objects"
+output: html_notebook
+---
+This is the new version, now with HVC and RA published dataset added.
+
+# LOAD LIBRARIES
+```{r}
+library(Seurat)
+library(tidyverse)
+source("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/Functions.R")
+```
+
+# SET UP DIRECTORIES
+```{r}
+setwd("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/03_Merge_Pallium")
+root_dir <- "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/03_Merge_Pallium"
+
+input_dir <- paste0(root_dir, "/CB_NF_DF_inputData")
+dir.create(input_dir, showWarnings = F)
+
+RDSfiles <- paste0(root_dir, "/RDS_files")
+dir.create(RDSfiles, showWarnings = F)
+
+Figures_dir <- paste0(root_dir, "/Figures")
+dir.create(Figures_dir, showWarnings = F)
+```
+
+# COPY DATA
+```{r}
+NeedToCopy <- "No"
+if (NeedToCopy == "Yes") {
+  source_dir <- "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/02_DoubletFinder_AllTele/Output_CB_NF_DF"
+  files_to_copy <- list.files(source_dir, pattern = "labeledDoublets\\.RDS$", recursive = TRUE, full.names = TRUE)
+  file.copy(files_to_copy, input_dir, overwrite = TRUE)
+}
+```
+
+# MERGE OBJECTS
+```{r}
+if (!file.exists(paste0(RDSfiles, "/PalliumMerge_exclBadSamples.rds"))) {
+  # Load objects
+  data_list <- list.files(path = input_dir, pattern = "Doublets.RDS")
+
+  Seurat_Objs <- list()
+  for (x in data_list) {
+    SeuObj <- readRDS(file = file.path(input_dir, x))
+    Seurat_Objs[[x]] <- SeuObj
+  }
+
+  # Filter out objects from BG or those that have been excluded due to QC
+  filtered_Seurat_Objs <- Seurat_Objs[!grepl("Area|Gp|Mst|Lst", names(Seurat_Objs))]
+  names(filtered_Seurat_Objs) <- gsub("_labeledDoublets.RDS$", "", names(filtered_Seurat_Objs))
+  filtered_Seurat_Objs <- filtered_Seurat_Objs[!names(filtered_Seurat_Objs)
+  %in% c("AN_3", "HVC_1", "Meso_1", "NCM_2")]
+
+  # Merge w/CellIDs
+  sample_names <- names(filtered_Seurat_Objs)
+  SeuObj_merged <- merge(
+    x = filtered_Seurat_Objs[[1]],
+    y = filtered_Seurat_Objs[-1],
+    add.cell.ids = sample_names,
+    project = "Pallium"
+  )
+
+  saveRDS(SeuObj_merged, file = paste0(RDSfiles, "/PalliumMerge_exclBadSamples.rds"))
+} else {
+  SeuObj_merged <- readRDS(file = paste0(RDSfiles, "/PalliumMerge_exclBadSamples.rds"))
+}
+```
+
+# ADD METADATA
+```{r}
+# load table
+TeleEvo_OrigIdent_MetaData <- read_csv(paste0(root_dir, "/Tables/TeleEvo_OrigIdent_MetaData.csv"))
+filtered_TeleEvo_OrigIdent_MetaData <-
+  TeleEvo_OrigIdent_MetaData[!grepl(
+    "Area|Gp|Mst|Lst",
+    TeleEvo_OrigIdent_MetaData$orig.ident
+  ), ]
+filtered_TeleEvo_OrigIdent_MetaData <-
+  filtered_TeleEvo_OrigIdent_MetaData[!filtered_TeleEvo_OrigIdent_MetaData$orig.ident
+    %in% c("AN_3", "HVC_1", "Meso_1", "NCM_2"), ]
+
+# add data
+SeuObj_merged$BirdID <- NA
+SeuObj_merged$AgeDPH <- NA
+SeuObj_merged$RegionAcronym <- NA
+SeuObj_merged$LibBatch <- NA
+SeuObj_merged$SeqBatch <- NA
+
+metaData_col <- colnames(filtered_TeleEvo_OrigIdent_MetaData[-1])
+sample_names <- unique(SeuObj_merged@meta.data[["orig.ident"]])
+for (sample in sample_names) {
+  metaData_row <- filtered_TeleEvo_OrigIdent_MetaData[filtered_TeleEvo_OrigIdent_MetaData$orig.ident == sample, ]
+  for (col in metaData_col) {
+    metaToAdd <- metaData_row[[col]]
+    SeuObj_merged[[col]][SeuObj_merged$orig.ident == sample, ] <- metaToAdd
+  }
+}
+
+# CHECK THAT METADATA WAS ADDED CORRECTLY
+Data_test <- FetchData(SeuObj_merged, vars = colnames(filtered_TeleEvo_OrigIdent_MetaData))
+data_df <- as.data.frame(Data_test)
+data_df_unique <- data_df[!duplicated(data_df), ]
+
+# REMOVE EXCESS METADATA
+columns_to_remove <-
+  names(SeuObj_merged@meta.data[grepl("SCT_snn_res.2|seurat_clusters|NF_clusters", names(SeuObj_merged@meta.data))])
+
+for (i in columns_to_remove) {
+  SeuObj_merged@meta.data[[i]] <- NULL
+}
+```
+
+# RE-NORMALIZE AS A SINGLE OBJECT TO SEE IF THAT WORKS
+```{r}
+if (!file.exists(paste0(RDSfiles, "/Merged_SCTbyOrigIdent_umap.rds"))) {
+  Obj_merged <- DietSeurat(SeuObj_merged, assays = "RNA")
+  Obj_merged <- SCTransform(Obj_merged, new.assay.name = "SCT_byOrigIdent")
+
+  Obj_merged <- RunPCA(Obj_merged, assay = "SCT_byOrigIdent", reduction.name = "pca_sctByOrig") %>%
+    FindNeighbors(dims = 1:30, reduction = "pca_sctByOrig") %>%
+    FindClusters(resolution = 1, graph.name = "SCT_byOrigIdent_snn", cluster.name = "unintegrated_sctByOrig")
+  Obj_merged <- RunUMAP(Obj_merged, dims = 1:30, reduction = "pca_sctByOrig", reduction.name = "umap.unintegrated_sctByOrig")
+
+  saveRDS(Obj_merged, file = paste0(RDSfiles, "/Merged_SCTbyOrigIdent_umap.rds"))
+} else {
+  Obj_merged <- readRDS(file = paste0(RDSfiles, "/Merged_SCTbyOrigIdent_umap.rds"))
+}
+
+
+groupings <- c("BirdID", "doublet_class", "unintegrated_sctByOrig")
+for (groupBy in groupings) {
+  DimPlot(Obj_merged, reduction = "umap.unintegrated_sctByOrig", group.by = groupBy) + coord_fixed()
+  ggsave(
+    filename = sprintf("%s/umap_unintegrated_sctByOrig_groupBy_%s.tiff", Figures_dir, groupBy),
+    bg = "white", width = 8, height = 7
+  )
+}
+
+FeaturePlot(Obj_merged, reduction = "umap.unintegrated_sctByOrig", features = "doublet_score") + coord_fixed()
+ggsave(
+  filename = sprintf("%s/FeatPlot_unintegrated_sctByOrig_groupBy_%s.tiff", Figures_dir, "doublet_score"),
+  bg = "white", width = 8, height = 7
+)
+```
