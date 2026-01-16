@@ -14,6 +14,6 @@ spatial_RNAseq - Analysis of spatial transcriptomic dataset for clustering, proc
 
 trees - Hierarchical clustering of cell clusters
 
-paper figures - Script for making figures in paper
+paper figures - Script for making portions of the figures in paper using the zebra finch snRNAseq dataset
 
 utils - Several files with utility functions used in other scripts
