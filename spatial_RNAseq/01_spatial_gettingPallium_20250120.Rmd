@@ -1,0 +1,152 @@
+This is after selecting the slides that are high QC,
+  and added metadata of slide information.
+After round of preprocessing and clustering 
+  will now use to select only pallium beads.
+
+###===== SET UP
+# LOAD LIBRARIES
+```{r}
+library(Seurat)
+library(tidyverse)
+library(readxl)
+library(Matrix)
+
+options(future.globals.maxSize = 100000 * 1024^10)
+```
+
+# SET UP DIRECTORIES
+```{r}
+setwd("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_Spatial")
+root_dir <- "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_Spatial"
+
+RDSfiles <- paste0(root_dir, "/RDS_files")
+dir.create(RDSfiles, showWarnings = F)
+
+Figures_dir <- paste0(root_dir, "/Figures")
+dir.create(Figures_dir, showWarnings = F)
+
+Tables_dir <- paste0(root_dir, "/Tables")
+dir.create(Tables_dir, showWarnings = F)
+```
+
+# LOAD DATA
+```{r}
+spatial_all <-
+  readRDS(
+    file = "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_Spatial/ForRepo/spatialAll_seurat.rds"
+  )
+
+```
+
+###===== GET PALLIUM CLUSTERS
+
+# VISUALIZE ALL OF TELE
+```{r}
+# visualize to only acquire pallium clusters
+SpatialDimPlot(spatial_all, group.by = "LXident", ncol = 2, pt.size.factor = 150, image.alpha = 0.2)
+ggsave(
+  filename = paste0(Figures_dir, "/01_AllTele_identifyPall/allTele_LXclusters.tiff"),
+  bg = "white", width = 10, height = 15
+)
+
+SpatialDimPlot(spatial_all, ncol = 2, pt.size.factor = 0, image.alpha = 1)
+ggsave(
+  filename = paste0(Figures_dir, "/tissue.tiff"),
+  bg = "white", width = 10, height = 15
+)
+
+for (i in levels(spatial_all@active.ident)) {
+  print(i)
+  SpatialDimPlot(spatial_all,
+    cells.highlight = WhichCells(spatial_all, idents = i),
+    ncol = 2, pt.size.factor = 150, image.alpha = 0.2
+  )
+  ggsave(
+    filename = sprintf("%s/01_AllTele_identifyPall/allTele_LXcluster_%s.tiff", Figures_dir, i),
+    bg = "white", width = 10, height = 15
+  )
+}
+
+
+custom_colors <- c(
+  "0" = "#ADD8E6",
+  "1" = "#B0B0B0",
+  "2" = "#808080",
+  "3" = "#87CEEB",
+  "4" = "#6495ED",
+  "5" = "#4682B4",
+  "6" = "#4169E1",
+  "7" = "black"
+)
+
+SpatialDimPlot(spatial_all,
+  group.by = "LXident", ncol = 2, pt.size.factor = 150, image.alpha = 0.2,
+  cols = custom_colors
+)
+ggsave(
+  filename = paste0(Figures_dir, "/01_AllTele_identifyPall/allTele_LXclusters_PallCols.tiff"),
+  bg = "white", width = 10, height = 15
+)
+```
+
+# SUBSET FOR PALLIUM
+```{r}
+spatial_pall <- subset(spatial_all, subset = LXident %in%
+  c("1", "2", "7"), invert = T)
+
+# Exclude by hand few cells not in pallium
+spatial_coords <- spatial_pall@images[["slice11"]]@coordinates
+beads_pick_11 <- rownames(spatial_coords)[spatial_coords$row > 50 & spatial_coords$col > 20]
+SpatialDimPlot(spatial_pall,
+  images = "slice11", cells.highlight = beads_pick_11,
+  ncol = 2, pt.size.factor = 150, image.alpha = 0.2
+)
+
+spatial_coords <- spatial_pall@images[["slice12"]]@coordinates
+beads_pick_12 <- rownames(spatial_coords)[spatial_coords$row > 50 & spatial_coords$col > 40]
+SpatialDimPlot(spatial_pall,
+  images = "slice12", cells.highlight = beads_pick_12,
+  ncol = 2, pt.size.factor = 150, image.alpha = 0.2
+)
+
+spatial_coords <- spatial_pall@images[["slice21"]]@coordinates
+beads_pick_21 <- rownames(spatial_coords)[spatial_coords$row > 70 & spatial_coords$col > 40]
+SpatialDimPlot(spatial_pall,
+  images = "slice21", cells.highlight = beads_pick_21,
+  ncol = 2, pt.size.factor = 150, image.alpha = 0.2
+)
+
+excl_beads <- c(beads_pick_11, beads_pick_12, beads_pick_21)
+
+spatial_pall <- subset(spatial_pall,
+  cells = excl_beads,
+  invert = T
+)
+
+spatial_pall$palliumBeads <- "pall"
+beadsInPall <- FetchData(spatial_pall, vars = "palliumBeads")
+saveRDS(beadsInPall, file = paste0(Tables_dir, "/PallBeads_meta_usingLXclustersNmanual.rds"))
+
+#- for checking
+SpatialDimPlot(spatial_pall,
+  ncol = 2, pt.size.factor = 150, image.alpha = 0.2
+)
+ggsave(
+  filename = paste0(Figures_dir, "/04_Pall/pallClean.tiff"),
+  bg = "white", width = 10, height = 15
+)
+
+SpatialFeaturePlot(spatial_pall,
+  features = "PVALB",
+  ncol = 2, pt.size.factor = 150, image.alpha = 0.2
+)
+ggsave(
+  filename = paste0(Figures_dir, "/04_Pall/pall_PVALB.tiff"),
+  bg = "white", width = 10, height = 15
+)
+
+# add to main object
+spatial_all$palliumBeads <- NA
+spatial_all$palliumBeads[Cells(spatial_pall)] <- "pall"
+```
+
