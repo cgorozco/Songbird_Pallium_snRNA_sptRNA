@@ -1,8 +1,3 @@
----
-title: "Excluding HVC_Pub3 and reintegrating and classifying"
-output: html_notebook
----
-
 ###========== SET UP
 # LOAD LIBRARIES
 ```{r}
