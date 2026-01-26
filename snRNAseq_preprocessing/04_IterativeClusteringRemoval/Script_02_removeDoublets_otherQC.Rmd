@@ -1,0 +1,364 @@
+---
+title: "Doublet removal and other possible QC"
+output: html_notebook
+---
+
+Checking if I should remove doublets from scDblFinder.
+Overall it looks like scDblFinder is better than Doublet Finder, 
+  with only missing a few possible doublets.
+
+###========== SET UP
+# LOAD LIBRARIES
+```{r}
+library(Seurat)
+library(tidyverse)
+source("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/Functions.R")
+library(readr)
+```
+
+# SET UP DIRECTORIES
+```{r}
+setwd("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/04_CheckDbl_otherQC")
+root_dir <- "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/04_CheckDbl_otherQC"
+
+RDSfiles <- paste0(root_dir, "/RDS_files")
+dir.create(RDSfiles, showWarnings = F)
+
+Figures_dir <- paste0(root_dir, "/Figures")
+dir.create(Figures_dir, showWarnings = F)
+```
+
+# LISTS
+```{r}
+CanMarkers <- c(
+  "SLC17A6", # glut cells,
+  # "NR2E1", #adult NSCs
+  # "SOX4", #neuronally committed precursors
+  # "DCX", #migrating neuroblasts
+  "GAD1", # gaba cells
+  "PDGFRA", # OPCs
+  "MBP", # Oligos
+  "LRIG1", # Astro
+  "CSF1R", # Microglia
+  "FLT1" # Endothelial
+)
+```
+
+
+###========== MERGING
+
+# LOAD MERGED OBJECT
+```{r}
+Obj_merged <- readRDS(file = "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/03_Merge_Pallium/RDS_files/Merged_SCTbyOrigIdent_umap.rds")
+```
+
+###===== REMOVE DOUBLETS?
+
+# SHOWING DOUBLETS
+```{r}
+Obj_merged <- BuildClusterTree(Obj_merged, features = c(CanMarkers, "doublet_score"), reorder = T)
+Obj_merged[["unintegrated_sctByOrig"]] <- Idents(object = Obj_merged)
+
+DotPlot(Obj_merged, features = c(CanMarkers, "doublet_score")) + RotatedAxis()
+ggsave(
+  filename = sprintf("%s/DotPlot_unintegrated_sctByOrig_%s.tiff", Figures_dir, "CanMarkers"),
+  bg = "white", width = 5, height = 12
+)
+
+groupings <- c("BirdID", "doublet_class", "unintegrated_sctByOrig")
+for (groupBy in groupings) {
+  DimPlot(Obj_merged, reduction = "umap.unintegrated_sctByOrig", group.by = groupBy) + coord_fixed()
+  ggsave(
+    filename = sprintf("%s/umap_unintegrated_sctByOrig_groupBy_%s.tiff", Figures_dir, groupBy),
+    bg = "white", width = 8, height = 7
+  )
+}
+
+FeaturePlot(Obj_merged, reduction = "umap.unintegrated_sctByOrig", features = "doublet_score") + coord_fixed()
+ggsave(
+  filename = sprintf("%s/FeatPlot_unintegrated_sctByOrig_groupBy_%s.tiff", Figures_dir, "doublet_score"),
+  bg = "white", width = 8, height = 7
+)
+
+# stacked plots
+StacksToPlot <- c("orig.ident", "doublet_class", "RegionAcronym")
+MetaData <- Obj_merged[[c("unintegrated_sctByOrig", StacksToPlot)]]
+for (StackGroup in StacksToPlot) {
+  stackedbarplot(MetaData, "unintegrated_sctByOrig", StackGroup)
+  ggsave(
+    filename = sprintf("%s/StackPlot_unintegrated_sctByOrig_%s.tiff", Figures_dir, StackGroup),
+    bg = "white", width = 10, height = 20
+  )
+}
+```
+
+# TESTING WAYS TO REMOVE DOUBLETS
+```{r}
+# Inspect potential doublets in clusters
+plot <- DimPlot(Obj_merged, reduction = "umap.unintegrated_sctByOrig", group.by = "doublet_class") + coord_fixed()
+# HoverLocator(plot = plot, information = FetchData(Obj_merged, vars = c("unintegrated_sctByOrig")))
+
+DimPlot(Obj_merged, reduction = "umap.unintegrated_sctByOrig", cells = WhichCells(Obj_merged, idents = 61)) + coord_fixed()
+
+FeaturePlot(Obj_merged,
+  reduction = "umap.unintegrated_sctByOrig", features = c("CSF1R", "SLC17A6"), blend = TRUE,
+  cells = WhichCells(Obj_merged, idents = 37), split.by = "doublet_class", coord.fixed = 1
+)
+ggsave(
+  filename = sprintf("%s/FeatPlot_test_%s.tiff", Figures_dir, "blend"),
+  bg = "white", width = 20, height = 20
+)
+
+
+FeatureScatter(Obj_merged,
+  group.by = "doublet_class",
+  cells = WhichCells(Obj_merged, idents = 64),
+  feature1 = "CSF1R", feature2 = "LRIG1", jitter = T, shuffle = T
+)
+ggsave(
+  filename = sprintf("%s/ScatPlot_test_%s.tiff", Figures_dir, "60"),
+  bg = "white", width = 10, height = 8
+)
+
+
+# do doublets express more mix of genes
+Doublets_only <- subset(Obj_merged, subset = doublet_class == "doublet")
+DotPlot(Doublets_only, features = CanMarkers) + RotatedAxis()
+ggsave(
+  filename = sprintf("%s/DotPlot_unintegrated_sctByOrig_%s_doubletsOnly.tiff", Figures_dir, "CanMarkers"),
+  bg = "white", width = 5, height = 12
+)
+
+singlets_only <- subset(Obj_merged, subset = doublet_class == "singlet")
+DotPlot(singlets_only, features = CanMarkers) + RotatedAxis()
+ggsave(
+  filename = sprintf("%s/DotPlot_unintegrated_sctByOrig_%s_singletsOnly.tiff", Figures_dir, "CanMarkers"),
+  bg = "white", width = 5, height = 12
+)
+
+
+FeatureScatter(Obj_merged,
+  group.by = "doublet_class",
+  # cells = WhichCells(Obj_merged, idents = 64),
+  feature1 = "CSF1R", feature2 = "LRIG1", jitter = T, shuffle = T
+)
+
+
+# split umaps
+DimPlot(Obj_merged,
+  split.by = "unintegrated_sctByOrig", group.by = "doublet_class",
+  ncol = 10
+)
+ggsave(
+  filename = sprintf("%s/umap_unintegrated_sctByOrig_splitBy_%s.tiff", Figures_dir, "Cluster"),
+  bg = "white", width = 30, height = 30
+)
+```
+
+# This method seems to be best to show dblFinder is good for doublet removal
+```{r}
+# Combination of markers feature plots
+GenePairsList <- combn(CanMarkers, 2, simplify = FALSE)
+
+for (i in seq_along(GenePairsList)) {
+  FeaturePlot(Obj_merged,
+    features = GenePairsList[[i]], blend = T,
+    max.cutoff = "q70", blend.threshold = 0.001, coord.fixed = 1
+  )
+  ggsave(
+    filename = sprintf("%s/BlendFeatPlots/FeatPlot_blend_%sand%s.tiff", Figures_dir, GenePairsList[[i]][1], GenePairsList[[i]][2]),
+    bg = "white", width = 15, height = 10
+  )
+}
+```
+
+
+
+###===== EXCLUDE DOUBLETS AND OTHER BAD CELLS AND RECLUSTER TO CHECK IF CLEANER
+Will add back cells from cluster 57 which might be transition OPC to Oligo, when subclustering
+
+# load data if needed
+```{r}
+Obj_merged <- readRDS(file = "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/03_Merge_Pallium/RDS_files/Merged_SCTbyOrigIdent_umap.rds")
+```
+
+# subset and remove excess metadata
+```{r}
+Filtered_obj_merged <- subset(Obj_merged, subset = doublet_class == "singlet")
+
+DefaultAssay(Filtered_obj_merged) <- "RNA"
+SeuObj <- DietSeurat(Filtered_obj_merged, assays = "RNA")
+
+# REMOVE EXCESS METADATA
+columns_to_remove <-
+  names(SeuObj@meta.data[grepl("seurat_clusters|nFeature_SCT_byOrigIdent|nCount_SCT_byOrigIdent", names(SeuObj@meta.data))])
+
+for (i in columns_to_remove) {
+  SeuObj@meta.data[[i]] <- NULL
+}
+```
+
+# Recluster and check marker expression
+Now I will recluster to try get rid of bird effect.
+So will treat region as treatment, 
+  and therefore regress out BirdID replicate per region
+```{r}
+SeuObj_og <- SeuObj
+SeuObj <- JoinLayers(SeuObj)
+SeuObj[["RNA"]] <- split(SeuObj[["RNA"]], f = SeuObj$RegionAcronym)
+
+SeuObj <- SCTransform(SeuObj,
+  new.assay.name = "SCT_byRegion",
+  vars.to.regress = "BirdID", return.only.var.genes = F
+)
+saveRDS(SeuObj, file = paste0(RDSfiles, "/Merged_noDbl_sctByRegion.rds"))
+# SeuObj <- readRDS(file = paste0(RDSfiles, "/Merged_noDbl_sctByRegion.rds"))
+
+assayUse <- "SCT_byRegion"
+reductionUse <- paste0("pca_", assayUse)
+SeuObj <- RunPCA(SeuObj, assay = assayUse, reduction.name = reductionUse) %>%
+  FindNeighbors(dims = 1:30, reduction = reductionUse) %>%
+  FindClusters(resolution = 1, graph.name = paste0(assayUse, "_snn"), cluster.name = paste0("unintegrated_", reductionUse))
+SeuObj <- RunUMAP(SeuObj, dims = 1:30, reduction = reductionUse, reduction.name = paste0("umap.unintegrated_", assayUse))
+
+# saveRDS(SeuObj, file = paste0(RDSfiles, "/Merged_noDbl_sctByRegion_umap.rds"))
+SeuObj <- readRDS(file = paste0(RDSfiles, "/Merged_noDbl_sctByRegion_umap.rds"))
+```
+
+# CAN MARKERS
+```{r}
+SeuObj <- BuildClusterTree(SeuObj, features = c(CanMarkers, "doublet_score"), reorder = T)
+SeuObj[[paste0("unintegrated_", reductionUse)]] <- Idents(object = SeuObj)
+
+DotPlot(SeuObj, features = c(CanMarkers, "doublet_score")) + RotatedAxis()
+ggsave(
+  filename = paste0(Figures_dir, "/noDoublets/DotPlot_canMarkers_noDbl.tiff"),
+  bg = "white", height = 15, width = 6
+)
+
+DimPlot(SeuObj) + coord_equal()
+FeaturePlot(SeuObj, features = c("PDGFRA", "MBP"), coord.fixed = T)
+```
+It looks like there some remnant doublets still, so will check how to remove 
+
+# CHECK IF NEEDS INTEGRATION
+```{r}
+DimPlot(SeuObj,
+  reduction = paste0("umap.unintegrated_", assayUse),
+  group.by = "BirdID"
+) + coord_equal()
+ggsave(
+  filename = paste0(Figures_dir, "/noDoublets/umap_BirdID_noDbl.tiff"),
+  bg = "white", height = 5, width = 6
+)
+```
+Doesn't look like it's mxing well by BirdID, especially HVCpool3. 
+However, as shown below, the integration seems to mix possible doublets.
+So will classify cell types then subcluster
+The final umap will be made at the end
+
+
+# CLASSIFY CELLS FOR SUBCLUSTERING
+Based on dot plot of marker and doublet score, 
+  classifying possible doublets
+  
+```{r}
+# doublet clustering flags
+SeuObj$flag_MaybeDbl <- ifelse(SeuObj$unintegrated_pca_SCT_byRegion %in% c("64", "63", "72", "73", "69", "71", "61", "74", "70"), "Flag", "NoFlag")
+DimPlot(SeuObj,
+  reduction = paste0("umap.unintegrated_", assayUse),
+  group.by = "flag_MaybeDbl"
+) + coord_equal()
+ggsave(
+  filename = paste0(Figures_dir, "/noDoublets/umap_DlbFlag_noDbl.tiff"),
+  bg = "white", height = 5, width = 6
+)
+
+# cell class
+SeuObj$CellClass_Sct_lvl2 <- "Empty"
+cluster_class_mapping <- list(
+  Glutamatergic = c(
+    "25", "6", "45", "27", "34", "44", "16", "28", "57", "78", "18",
+    "51", "35", "50", "38", "66", "36", "53", "33", "40", "7", "43",
+    "1", "22", "4", "5", "17", "76",
+    "62", "58", "41", "56", "42", "8", "20",
+    "15", "77", "13"
+  ),
+  GABAergic = c(
+    "59", "49", "2", "23", "21", "46", "47", "11", "37", "52", "48",
+    "10", "54", "32", "55",
+    "60"
+  ),
+  OPC_Oligo = c(
+    "19", "31", # opc
+    "61", "74", "12", "68", "70", "9", "79"
+  ), # oligo
+  Astro_Endo = c(
+    "0", "65", "14", "29", "73", "69", "3", "30", "26", "71", "67",
+    "24", "75", "64", "63", "72"
+  ), # endo
+  Microglia = c("39")
+)
+
+for (class_name in names(cluster_class_mapping)) {
+  cluster_names <- cluster_class_mapping[[class_name]]
+  cluster_cells <- SeuObj@active.ident %in% cluster_names
+  SeuObj$CellClass_Sct_lvl2[cluster_cells] <- class_name
+}
+
+# saveRDS(SeuObj, file = paste0(RDSfiles, "/Merged_umap_cellClass.rds"))
+
+# visualize
+DimPlot(SeuObj,
+  reduction = paste0("umap.unintegrated_", assayUse),
+  group.by = c("CellClass_Sct_lvl2")
+) + coord_equal()
+ggsave(
+  filename = paste0(Figures_dir, "/noDoublets/umap_cellClass.tiff"),
+  bg = "white", width = 6, height = 5
+)
+
+DimPlot(SeuObj,
+  reduction = paste0("umap.unintegrated_", assayUse),
+  group.by = c("CellClass_Sct_lvl2", "flag_MaybeDbl")
+) + coord_equal()
+ggsave(
+  filename = paste0(Figures_dir, "/noDoublets/umap_cellClass_DblFlag.tiff"),
+  bg = "white", width = 15, height = 10
+)
+
+MetaData <- SeuObj[[c("CellClass_Sct_lvl2", "BirdID", "orig.ident")]]
+stackedbarplot(MetaData, "CellClass_Sct_lvl2", "BirdID")
+stackedbarplot_colors(MetaData, "CellClass_Sct_lvl2", "orig.ident")
+```
+The cell labeling doesn't seem to be perfect in UMAP space.
+Therefore will move it to astrocyte CellxGene to hand label the rest of cells so for when
+I subcluster.
+
+# Add CellXGene labeling
+```{r}
+SeuObj <- readRDS(file = paste0(RDSfiles, "/Merged_umap_cellClass.rds"))
+
+CxG_cellLabels <- read_csv(paste0(root_dir, "/CellXGene/PallMerge-cell-labels-FE3KETAG.csv"),
+  skip = 2
+) %>% as.data.frame()
+rownames(CxG_cellLabels) <- CxG_cellLabels$index
+CxG_cellLabels <- CxG_cellLabels %>% select(-index)
+
+SeuObj <- AddMetaData(SeuObj, CxG_cellLabels)
+
+metadata <- SeuObj[[c("CellClass_Sct_lvl2", "CellClass_Sct_lvl2_CxG")]]
+metadata2 <- metadata %>%
+  mutate(CellClass_Sct_lvl2_CxG = ifelse(CellClass_Sct_lvl2_CxG == "unassigned", CellClass_Sct_lvl2, CellClass_Sct_lvl2_CxG)) %>%
+  select(-CellClass_Sct_lvl2)
+
+SeuObj <- AddMetaData(SeuObj, metadata2)
+
+DimPlot(SeuObj, group.by = "CellClass_Sct_lvl2_CxG") + coord_equal()
+ggsave(
+  filename = paste0(Figures_dir, "/noDoublets/umap_cellClass_CxG.tiff"),
+  bg = "white", width = 6, height = 5
+)
+
+saveRDS(SeuObj, file = paste0(RDSfiles, "/Merged_umap_cellClass.rds"))
+```
