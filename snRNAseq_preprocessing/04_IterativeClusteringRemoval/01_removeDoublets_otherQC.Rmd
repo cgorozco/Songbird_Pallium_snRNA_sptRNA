@@ -1,8 +1,3 @@
----
-title: "Doublet removal and other possible QC"
-output: html_notebook
----
-
 Checking if I should remove doublets from scDblFinder.
 Overall it looks like scDblFinder is better than Doublet Finder, 
   with only missing a few possible doublets.
