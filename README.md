@@ -15,6 +15,6 @@ snRNAseq_preprocessing - Processing of snRNA-seq data following CellBender (ambi
 
 spatial_RNAseq - Analysis of spatial transcriptomic dataset for clustering, processing, and integrating with snRNAseq dataset
 
-paper figures - Script for making portions of the figures in paper using the zebra finch snRNAseq dataset
+paper_figs - Script for making portions of the figures in paper using the zebra finch snRNAseq dataset
 
 utils - Several files with utility functions used in other scripts
