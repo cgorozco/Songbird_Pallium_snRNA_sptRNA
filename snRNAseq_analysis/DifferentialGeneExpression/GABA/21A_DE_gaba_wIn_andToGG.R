@@ -230,27 +230,3 @@ ggsave(file.path(Fig_dir, "vlcPlotComb_MGEsong_vOtherMGE.svg"),
   plot = comb_plot,
   width = 4, height = 5.7, dpi = 600
 )
-
-
-# prepare (rename your log-fold-change column if necessary)
-d1 <- degs_list[[1]] %>% select(gene, logFC1 = avg_log2FC, p1 = p_val_adj)
-d2 <- degsToGG_list[[1]] %>% select(gene, logFC2 = avg_log2FC, p2 = p_val_adj)
-
-# inner join keeps only genes present in both
-cmp <- inner_join(d1, d2, by = "gene")
-cmp <- cmp %>% filter(logFC1 > 0 & logFC2 > 0)
-
-
-ggplot(cmp, aes(x = logFC1, y = logFC2)) +
-  # geom_hline(yintercept = 0, linetype = "dashed") +
-  # geom_vline(xintercept = 0, linetype = "dashed") +
-  geom_point(aes(color = (p1 < 0.05 & p2 < 0.05)), alpha = 0.6) +
-  scale_color_manual(values = c("grey70", "red"), guide = guide_legend(title = "sig in both")) +
-  geom_text_repel(
-    data = cmp %>% slice_max((abs(logFC1) + 5) + abs(logFC2), n = 25),
-    aes(label = gene), size = 3
-  ) +
-  theme_minimal() +
-  labs(x = "log2FC (df1)", y = "log2FC (df2)", title = "Compare log2FC between df1 and df2") +
-  theme_classic2()
-
