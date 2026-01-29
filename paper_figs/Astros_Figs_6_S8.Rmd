@@ -479,10 +479,8 @@ ggsave(filename = paste0(Figures_dir, "/FigS2/heatPlot_astroMrks.tiff"), plot = 
 
 DotPlot_scCustom(astro_seu, features = unique(astro_degs_wilcox$gene), flip_axes = T) 
 
-
 ```
 
-.svg files of heatmap crash inkscape
 
 
 
