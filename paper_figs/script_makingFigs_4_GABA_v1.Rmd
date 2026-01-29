@@ -1,0 +1,227 @@
+---
+title: "GABAergic song specific"
+output: html_notebook
+---
+
+###========== SET UP
+# LOAD LIBRARIES
+```{r}
+library(Seurat)
+library(SeuratData)
+library(tidyverse)
+library(pheatmap)
+library(scCustomize)
+library(ggVennDiagram)
+library(ggpubr)
+library(ComplexUpset)
+#library(Azimuth)
+#library(rhdf5)
+library(readxl)
+library(GeneOverlap)
+
+source("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/Functions/CommonLevelsColors.R")
+source("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/Functions/commonViz.R")
+source("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/Functions/stackplots.R")
+source("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/Functions/spearmanCorr_heatmap.R")
+
+options(future.globals.maxSize = 100000 * 1024^10)
+options(timeout = 100000)
+
+```
+
+# SET UP DIRECTORIES
+```{r}
+setwd('/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_paper')
+root_dir <- '/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_paper'
+
+RDSfiles <- paste0(root_dir, "/RDS_files")
+dir.create(RDSfiles, showWarnings = F)
+
+Figures_dir <- paste0(root_dir, "/Figures")
+dir.create(Figures_dir, showWarnings = F)
+
+Tables_dir <- paste0(root_dir, "/Tables")
+dir.create(Tables_dir, showWarnings = F)
+
+PaperFigs <- "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_paper/Figures/Fig4_GabaClass"
+PaperFigs_supp <- "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_paper/Figures/FigS4"
+
+```
+
+# LOADING DATSETS
+```{r}
+seuObj <- readRDS("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/06_Taxonomy/AllenClustering/RDS_files/OutputUse/seuObj_iterCluster_clean_20250131.rds")
+
+seuObj$clusterName3 <- factor(seuObj$clusterName3, levels = dendro_order_3)
+Idents(seuObj) <- "clusterName3"
+
+GABA_Clust <- seuObj$clusterName3[grepl("LGE|MGE|CGE", seuObj$clusterName3)] %>% unique()
+Gaba_seu <- subset(seuObj, subset = clusterName3  %in% GABA_Clust)
+Gaba_seu <- ScaleData(Gaba_seu, assay = "SCTorigIdent3", features = rownames(Gaba_seu))
+
+Gaba_seuAvg <- AverageExpression(object = Gaba_seu, assays = "SCTorigIdent3", layer = "data", group.by = c('clusterName3'), return.seurat = T)
+
+```
+
+#-- COMMON GENES
+## DEGs
+```{r}
+# GabaDEGs_roc <- readRDS(file = "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/12_DGE/GABA/RDS_files/gaba_degs_roc_FC1pct005_NegAlso_20250328.rds")
+# 
+# GabaDEGs_roc <- FindAllMarkers(Gaba_seu,
+#                                assay = "SCTorigIdent3",
+#                                logfc.threshold = 1,
+#                                min.pct = 0.05, 
+#                                only.pos = F,
+#                                test.use = "roc"
+#                                )
+
+GabaDEGs_roc <- readRDS(file = "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/12_DGE/GABA/RDS_files/gaba_degs_roc_FC1pct005_20250318.rds")
+
+
+write_csv(GabaDEGs_roc, file = paste0(Tables_dir, "/Fig4/GABAdegs_roc.csv"))
+
+```
+The commented degs is the same but not just positive
+
+## TFs
+```{r}
+# By TFs
+tf_list <- readxl::read_excel("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/geneLists/tf_list.xlsx", 
+    sheet = "Table S1. Related to Figure 1B", 
+    skip = 1)
+
+colnames(tf_list)[colnames(tf_list) == "...4"] <- "isTF"
+TFs <- tf_list$Name[tf_list$isTF == "Yes"]
+
+```
+
+## Markers
+```{r}
+gabaMarkers <- c("FOXP2", "NXPH1", "ST18", "PVALB", "NPY", "SST", "PENK", "LHX8", "LAMP5",
+                 "LHX6", "SOX6", "SATB1",
+                 "SP8", "NR2E1", "PROX1",
+                 "MEIS2" # "NPAS1", "TTLL5", "RELN", "ADARB2"
+                 )
+
+# gabaMarkers_chk <- c("CACNA1B", "CACNA2D3", "MAN1A1", "ANO1", 
+#                      "CHODL", "LHX8", "ST18", "ABI3BP", "SLC24A2",
+#                      "SST", "PVALB", "FOXP1", "DGKH", "SGCG", "CPA6",
+#                      "FGFRL1", "STK31", "FOXP2") # NOT clear 1:1 w/chk
+
+```
+
+#============== Making figs ==========================================##########
+##-- Can Markers and distribution (Panel A)
+
+###-- Markers dot plot
+```{r}
+TFs2Plot <- GabaDEGs_roc$gene[GabaDEGs_roc$gene %in% TFs] %>% unique()
+genes2Plot <- c(TFs2Plot, gabaMarkers[!gabaMarkers %in% TFs2Plot])
+clusteredByGenes <- Clustered_DotPlot(Gaba_seu, features = genes2Plot, cluster_ident = F, flip = T)
+
+# get clustered gene order
+col_order <- clusteredByGenes[[2]]@ht_list[["matrix_8"]]@column_order_list[[1]]
+clustered_gene_names <- colnames(clusteredByGenes[[2]]@ht_list[["matrix_8"]]@matrix)[col_order]
+
+# manually arrange feature order, minimal since they are already cluteres
+orderedGenes <- c(
+                  ## CGE
+                  "LAMP5", "TRPS1", # LAMP5 markers
+                 
+                  "MEF2C",
+                  "ETV1", "HMGA2",
+                  "LHX8", "SOX5", "THRB", 
+                  "DPF3", "SP8", "PENK", "NR2E1",  #SNCG/VIP
+                  "CNR1", "NR2F2",
+                  "ADARB2",
+                  
+                  ## MGE
+                   "SST", "NPY",  "CHODL", "ALKAL1", #sst
+
+                   "PVALB", "ADSS1",
+                  "MAF", "NXPH1",
+                  
+                  "ST18", "NFIA", "PROX1", "RORA", "LHX6", "NFIB",
+                  "SOX6",  "ZEB2", "ZNF536", 
+                  "SETBP1", "SOX2",
+                  
+                  #LGE
+                  "FOXP1", "PBX3", "FOXP2", "MEIS2", "MEIS1", "ZFHX4", "TSHZ1")
+
+gaba_CanMrks_dot <- DotPlot_scCustom(Gaba_seu, features = rev(orderedGenes),
+                                     #col.min = 0, col.max = 3, 
+                                     dot.min = 0.01, dot.scale = 8,
+                                     colors_use = colorRampPalette(c("#f0f0f0", "#020202"))(100)) +
+      theme(
+            axis.line = element_line(color = "#060606"),
+            axis.ticks = element_line(color = "#060606"),
+            axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)
+            )
+
+
+ggsave(filename = paste0(PaperFigs, "/dotplot_GabaCanMarkers_v2.svg"), plot = gaba_CanMrks_dot,
+       width = 11, height = 4.5)
+
+
+
+```
+  "BCL11A", 
+ "TSHZ3", "SATB1",  "ZNF804A", # not informative
+ "TSHZ2", # pv and and sst-song
+ "ZNF385D", #pv?
+"MYT1", #ST18
+"ZNF804B", "ZNF385B", # all mge?
+                  #"NPAS3", # maybe for non-LGE
+
+
+
+###-- Region distribution stackplot
+```{r}
+Gaba_seu_meta <- FetchData(Gaba_seu, vars = c("orig.ident", "RegionAcronym", "clusterName3"))
+Gaba_seu_meta$RegionAcronym <- factor(Gaba_seu_meta$RegionAcronym, levels = lvl_order)
+Gaba_seu_meta$orig.ident <- factor(Gaba_seu_meta$orig.ident, levels = origIdent_lvls)
+
+custom_colors <- c("#6F6F6F", "#7A5030FF", "#706543FF", "#1F593BFF", "#547B4FFF", "#6F97A8FF", "#486688FF", "#47477CFF", "#C8533AFF", "#D2BC6FFF")
+
+stck <- stackedbarplot_colors(Gaba_seu_meta, "clusterName3", "RegionAcronym")
+ggsave(filename = paste0(PaperFigs, "/stackplot_GABAcluster_byRgn.svg"), plot = stck,
+       width = 10, height = 7)
+
+
+stck_supp <- stackedbarplot_colors(Gaba_seu_meta, "clusterName3", "orig.ident", custom_colors = origIdent_colors)
+ggsave(filename = paste0(PaperFigs_supp, "/stackplot_GABAcluster_byOridIdent.svg"), plot = stck_supp,
+       width = 15, height = 7)
+
+```
+
+
+
+#============ SUPPLEMENTARY FIGS ==========================================#####
+# HeatMap
+```{r}
+hMap <- DoHeatmap(subset(Gaba_seu, downsample = 200), features = GabaDEGs_roc$gene, # smallest cluster has ~250
+                  assay = "SCTorigIdent3",
+                  group.colors = c("#a0acff", "#5552d5",
+                             sample(colorRampPalette(c("#c3f1fc", "#1f65b5"))(12)),
+                             sample(colorRampPalette(c("#76d8bb", "#529e9a"))(5))
+                           ),
+              angle = 90, size = 2)
+
+ggsave(filename = paste0(PaperFigs_supp, "/heatmap_GABAcluster_ROCmrks.tiff"), plot = hMap,
+       width = 6, height = 40)
+
+```
+Using ROC to find the Genes makes a cleaner looking plot.
+Also, choosing the top 50 ROC is already close to getting all the genes found,
+  so will just use all of them.
+  
+top <- GabaDEGs_roc %>% 
+  filter(avg_log2FC > 0) %>% 
+  group_by(cluster) %>% 
+  arrange(desc(power)) %>%
+  slice_head(n = nUse) %>%
+  ungroup()
+
+Downsampled from 1000 to 500 cells used still looks the same
+
