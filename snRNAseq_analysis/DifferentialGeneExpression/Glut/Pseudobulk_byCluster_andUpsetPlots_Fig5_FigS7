@@ -1,4 +1,5 @@
 # LOAD LIBRARIES
+library(Seurat)
 library(UpSetR)
 library(ComplexUpset)
 library(scCustomize)
