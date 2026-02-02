@@ -1,0 +1,778 @@
+---
+title: "Making the figures of snRNAseq for the paper - Fig. 1"
+output: html_notebook
+---
+
+###========== SET UP
+# LOAD LIBRARIES
+```{r}
+library(Seurat)
+library(SeuratDisk)
+library(tidyverse)
+library(patchwork)
+library(readr)
+library(readxl)
+library(SeuratWrappers)
+library(SeuratData)
+library(scCustomize)
+# library(Azimuth)
+library(pheatmap)
+library(ggdendro)
+library(reticulate)
+library(anndata)
+library(BPCells)
+library(RColorBrewer)
+library(scrattch.hicat)
+library(ggdendro)
+library(cowplot)
+library(paletteer)
+library(lme4)
+library(ggpubr)
+
+
+# source("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/Functions/orthoAssay.R")
+source("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/Functions/stackplots.R")
+source("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/Functions/geneLists.R")
+source("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/Functions/commonViz.R")
+source("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/Functions/CommonLevelsColors.R")
+
+options(future.globals.maxSize = 100000 * 1024^10)
+options(timeout = 100000)
+```
+
+
+# SET UP DIRECTORIES
+```{r}
+setwd("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_paper")
+root_dir <- "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_paper"
+
+RDSfiles <- paste0(root_dir, "/RDS_files")
+dir.create(RDSfiles, showWarnings = F)
+
+Figures_dir <- paste0(root_dir, "/Figures")
+dir.create(Figures_dir, showWarnings = F)
+
+Tables_dir <- paste0(root_dir, "/Tables")
+dir.create(Tables_dir, showWarnings = F)
+```
+
+# LOAD DATA AND PREP
+```{r}
+seuObj <- readRDS("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/06_Taxonomy/AllenClustering/RDS_files/OutputUse/seuObj_iterCluster_clean_20250131.rds")
+```
+
+# modify meta
+```{r}
+seuObj$RegionAcronym <- as.character(seuObj$RegionAcronym)
+seuObj$RegionAcronym <- factor(seuObj$RegionAcronym, levels = lvl_order)
+seuObj$clusterName3 <- factor(seuObj$clusterName3, levels = dendro_order_3)
+seuObj$orig.ident <- factor(seuObj$orig.ident, levels = origIdent_lvls)
+
+Idents(seuObj) <- "clusterName3"
+```
+
+
+# common
+```{r}
+metaToPlot <- FetchData(seuObj, vars = c("IterConsenClusters", "classLvl3_cluster", "RegionAcronym", "orig.ident", "PallRgn", "SubGlutCluster", "clusterName", "BirdID", "clusterName2", "clusterName3"))
+clustAvg <- AverageExpression(object = seuObj, assays = "SCTorigIdent3", layer = "data", group.by = c("clusterName3"), return.seurat = T)
+
+heightUse <- 9
+widthUse <- 3
+ratioUse <- 3
+
+# custom_colors <- c("#5C798B", "#768E6D", "#A38C78", "#A1768F", "#D8B56D", "#8C8C8C")
+cluster_colors <- c(
+  sample(colorRampPalette(c("#116834", "#b3c6bb"))(length(unique(seuObj$clusterName3[seuObj$Allen_classLvl2 == "Glutamatergic"])))),
+  c("#a0acff", "#5552d5", sample(colorRampPalette(c("#c3f1fc", "#1f65b5"))(12)), sample(colorRampPalette(c("#76d8bb", "#529e9a"))(5))),
+  colorRampPalette(c("#ba7b43", "#cdbbac"))(length(unique(seuObj$clusterName3[seuObj$Allen_classLvl2 == "Astroependymal"]))),
+  colorRampPalette(c("#c4a9b9", "#79596b"))(length(unique(seuObj$clusterName3[seuObj$Allen_classLvl2 == "OPC_Oligo"]))),
+  colorRampPalette(c("#D8B56D", "#8C8C8C"))(length(unique(seuObj$clusterName3[seuObj$Allen_classLvl2 %in% c("Micro", "Endo")])))
+)
+
+cluster_colors <- setNames(cluster_colors, dendro_order_3)
+```
+
+
+###===== DENDROGRAM AND INFO
+# Dendro and order
+```{r}
+ClusteringMarkerGenes <- readRDS(file = "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/06_Taxonomy/AllenClustering/RDS_files/markersIterClust.rds")
+
+avgExpr_df <- as.data.frame(AverageExpression(seuObj, group.by = "clusterName3", assays = "SCTorigIdent3", layer = "data"))
+colnames(avgExpr_df) <- gsub("SCTorigIdent3\\.", "", colnames(avgExpr_df))
+avgExpr_df_filt <- filter(avgExpr_df, rownames(avgExpr_df) %in% ClusteringMarkerGenes)
+
+avgExpr_dend <- build_dend(avgExpr_df_filt)
+plot(avgExpr_dend$dend)
+avgExpr_dend_reordered <- rotate(avgExpr_dend$dend, order = dendro.order.3)
+plot(avgExpr_dend_reordered)
+
+if (T) {
+  dhc <- as.dendrogram(avgExpr_dend_reordered)
+  plot(dhc)
+  ddata <- ggdendro::dendro_data(dhc)
+}
+
+dend_gg <- ggplot(segment(ddata)) +
+  geom_segment(aes(x = x, y = y, xend = xend, yend = yend), color = "#060606") +
+  coord_flip() +
+  theme_void() +
+  scale_y_reverse() +
+  theme(
+    aspect.ratio = ratioUse
+  )
+
+dend_gg
+ggsave(
+  filename = paste0(Figures_dir, "/Fig1/dendro_noLabels.tiff"), plot = dend_gg,
+  bg = NA, width = widthUse, height = heightUse
+)
+ggsave(
+  filename = paste0(Figures_dir, "/Fig1/dendro_noLabels.svg"), plot = dend_gg,
+  bg = "white", width = widthUse, height = heightUse
+)
+```
+
+# test w/tree
+```{r}
+NonGlutBranches <- ddata[["labels"]][["label"]][!grepl("Glut.", ddata[["labels"]][["label"]])]
+dend_GlutBranches <- prune(dhc, leaves = NonGlutBranches)
+plot(dend_GlutBranches)
+
+dend_GlutBranches <- color_branches(dend_GlutBranches, h = 0.14, col = DiscretePalette_scCustomize(num_colors = 56, palette = "varibow", shuffle_pal = T))
+plot(dend_GlutBranches)
+```
+I want to get subclasses (level higher than current clusters) to find DGE.
+So I think subclass will be better instead with manual dendro, region or origin,
+and how they correspond to chicken clusters.
+
+
+# Number of cells
+```{r}
+metaToPlot$clusterName3 <- factor(metaToPlot$clusterName3, levels = dendro_order_3)
+
+NumCells <- metaToPlot %>%
+  group_by(clusterName3) %>%
+  summarize(count = n())
+
+ncells_count <- ggplot(NumCells, aes(x = clusterName3, y = count)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  # scale_y_log10() +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme_classic() +
+  labs(y = "Number of Cells") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+ncells_log <- ggplot(NumCells, aes(x = count, y = clusterName3)) +
+  geom_bar(stat = "identity", fill = cluster_colors) +
+  scale_x_log10(
+    breaks = c(10, 100, 1000, 10000), # Set breaks at 10, 100, 1000, 10000
+    labels = scales::comma
+  ) +
+  geom_vline(xintercept = c(10, 100, 1000, 10000), linetype = "dashed", color = "#060606") +
+  theme_classic() +
+  labs(x = "Nuclei No.") +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+    axis.title.y = element_blank()
+  ) +
+  coord_fixed(0.8)
+
+ncells_count
+ncells_log
+```
+
+# Heatmap of location proportion
+```{r}
+PropCells_byRgn <- metaToPlot %>%
+  group_by(clusterName3, RegionAcronym) %>%
+  summarize(count = n(), .groups = "drop") %>%
+  complete(clusterName3, RegionAcronym, fill = list(count = 0)) %>% # Ensure all combinations exist
+  group_by(clusterName3) %>%
+  mutate(proportion = count / sum(count))
+
+PropHeat <- ggplot(PropCells_byRgn, aes(x = RegionAcronym, y = clusterName3, fill = proportion)) +
+  geom_tile(color = "lightgray", linewidth = 0.2) +
+  scale_fill_gradient(low = "white", high = brewer.pal(9, "Blues")[9]) +
+  theme_classic() +
+  labs(fill = "Prop. by Cluster") +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+    axis.text.y = element_text(hjust = 0, vjust = 0.5),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.ticks = element_blank(),
+    legend.position = "left",
+    axis.line = element_line(color = "#060606")
+  ) +
+  geom_vline(xintercept = c(1.5, 3.5, 8.5), color = "#060606", linewidth = 0.4) +
+  geom_vline(xintercept = c(5.5), color = "darkgrey", linewidth = 0.5) +
+  geom_hline(yintercept = c(26.5, 45.5), color = "#060606", linewidth = 0.2) +
+  coord_fixed(ratio = 1) +
+  theme()
+
+PropHeat
+```
+
+# Significance test of location
+```{r}
+metaStats <- metaToPlot %>%
+  select(clusterName3, RegionAcronym, BirdID) %>%
+  group_by(clusterName3) %>%
+  mutate(ClstrCount = n()) %>%
+  group_by(clusterName3, RegionAcronym, BirdID) %>%
+  mutate(ClstrRgnNbyID = n()) %>%
+  mutate(Prop = ClstrRgnNbyID / ClstrCount) %>%
+  ungroup() %>%
+  complete(clusterName3, nesting(RegionAcronym, BirdID), fill = list(Prop = 0)) %>%
+  unique()
+
+#-- Calculate Z-score based on median and MAD
+results_list <- list()
+for (cluster in unique(metaStats$clusterName3)) {
+  cluster_data <- metaStats %>% filter(clusterName3 == cluster)
+
+  medians <- cluster_data %>%
+    group_by(RegionAcronym) %>%
+    summarise(median_value = median(Prop))
+
+  overall_median <- median(cluster_data$Prop)
+  overall_mad <- mad(cluster_data$Prop)
+
+  results_list[[cluster]] <- medians %>%
+    mutate(z_score = (median_value - overall_median) / (overall_mad + 0.00001)) %>%
+    mutate(is_outlier = z_score > 2000)
+}
+
+outliers_df <- bind_rows(results_list, .id = "clusterName3")
+
+PropCells_with_outliers <- PropCells_byRgn %>%
+  left_join(outliers_df %>% select(clusterName3, RegionAcronym, is_outlier),
+    by = c("clusterName3", "RegionAcronym")
+  )
+
+PropHeat_sig <- PropHeat +
+  geom_text(
+    data = PropCells_with_outliers %>% filter(is_outlier == TRUE),
+    aes(label = "*"), color = "red", size = 3, vjust = 0.7
+  )
+
+PropHeat_sig
+```
+I tried once with:
+overall_median <- median(cluster_data$Prop[cluster_data$Prop != 0]
+but not very good, so first testing to only positive z-scores
+that cleaned, but still didn't highlight some obvious clusters, so now have as
+
+overall_median <- median(cluster_data$Prop)
+
+depending on the z-score threshold it makes sense for some but not for others,
+so have to think about best statistical way..
+
+# ggpubr sig test
+```{r}
+metaStats <- metaToPlot %>%
+  select(clusterName3, RegionAcronym, BirdID) %>%
+  group_by(clusterName3) %>%
+  mutate(ClstrCount = n()) %>%
+  group_by(clusterName3, RegionAcronym, BirdID) %>%
+  mutate(ClstrRgnNbyID = n()) %>%
+  mutate(Prop = ClstrRgnNbyID / ClstrCount) %>%
+  ungroup() %>%
+  complete(clusterName3, nesting(RegionAcronym, BirdID), fill = list(Prop = 0)) %>%
+  unique()
+
+prop_plots <- ggboxplot(metaStats,
+  x = "RegionAcronym", y = "Prop", color = "RegionAcronym",
+  add = "jitter", legend = "none",
+  facet.by = "clusterName3"
+) +
+  rotate_x_text(angle = 90) +
+  geom_hline(yintercept = mean(metaStats$Prop), linetype = 2) + # Add horizontal line at base mean
+  stat_compare_means(method = "anova", label = "p.signif", label.y = 0.4, color = "darkred") + # Add global annova p-value
+  stat_compare_means(
+    label = "p.signif", method = "wilcox.test",
+    ref.group = ".all.", hide.ns = T,
+    label.y = 0.45,
+    method.args = list(alternative = "greater")
+  )
+
+ggsave(
+  filename = paste0(Figures_dir, "/FigS1/cluster_props.tiff"), plot = prop_plots,
+  bg = NA, width = heightUse * 2, height = heightUse * 2
+)
+```
+
+
+# Canonical marker expression heatmap
+Will change to dotplot since Todd thought it was more intuitive.
+Also removed color bar, because they thought redundant
+
+```{r}
+seuObj$clusterName3 <- factor(seuObj$clusterName3, levels = dendro_order_3)
+
+#-- possible genes to add to canmarkers
+seuObj$clusterName3_noPrt <- gsub("\\([^\\)]+\\)", "", seuObj$clusterName3)
+Idents(seuObj) <- "clusterName3_noPrt"
+
+Mrks_bySubClss <- FindAllMarkers(seuObj,
+  logfc.threshold = 2,
+  min.diff.pct = 0.3,
+  min.pct = 0.1,
+  test.use = "roc",
+  recorrect_umi = F
+)
+
+#- can marker expression
+CanMrks_heat <- DotPlot_scCustom(seuObj,
+  features = CanMarkers, group.by = "clusterName3",
+  dot.min = 0.05,
+  dot.scale = 7.5,
+  # col.min = 0, col.max = 3, dot.min = 0,
+  colors_use = colorRampPalette(c("#f0f0f0", "#020202"))(100),
+  x_lab_rotate = T
+) +
+  theme(
+    axis.line = element_line(color = "#060606"),
+    axis.ticks = element_line(color = "#060606")
+  )
+```
+
+
+#-- Join
+```{r}
+ncells_log2 <- ncells_log +
+  theme(
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank()
+  )
+
+PropHeat2 <- PropHeat +
+  theme(
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank()
+  )
+
+Comb1 <- ncells_log2 + PropHeat2 + CanMrks_heat +
+  plot_layout(
+    guides = "collect",
+    widths = c(1, 1, 1.8)
+  )
+
+Comb1
+
+ggsave(
+  filename = paste0(Figures_dir, "/Fig1/count_prop_CanMarks.tiff"), plot = Comb1,
+  bg = NA, width = heightUse * 1.6, height = heightUse
+)
+ggsave(
+  filename = paste0(Figures_dir, "/Fig1/count_prop_CanMarks.svg"), plot = Comb1,
+  bg = "transparent", width = heightUse * 1.6, height = heightUse
+)
+```
+Need to go back and correct the naming, there are some called NidoHyper
+  which should be called Nido
+
+
+
+
+###===== UMAP PLOTS
+```{r}
+u1 <- DimPlot(seuObj, group.by = "clusterName3", shuffle = T, cols = cluster_colors) +
+  NoLegend() +
+  coord_equal() +
+  ggtitle("Cluster") +
+  NoAxes()
+
+ggsave(paste0(Figures_dir, "/Fig1/umap_byCluster.tiff"),
+  plot = u1,
+  bg = "transparent", width = 12, height = 12
+)
+ggsave(paste0(Figures_dir, "/Fig1/umap_byCluster.svg"),
+  plot = u1,
+  bg = "transparent", width = 12, height = 12
+)
+```
+
+
+
+######======================= Tables =================================##########
+
+```{r}
+meta4props <- FetchData(seuObj, vars = c("RegionAcronym", "clusterName3"))
+
+meta4props_percent <- meta4props %>%
+  count(RegionAcronym, clusterName3) %>%
+  group_by(clusterName3) %>%
+  mutate(percent = n / sum(n) * 100) %>%
+  select(-n) %>%
+  pivot_wider(
+    names_from  = RegionAcronym,
+    values_from = percent,
+    values_fill = 0
+  )
+
+write_csv(meta4props_percent, file = paste0(Tables_dir, "/SuppTable_pct_ClusterByRegion.csv"))
+
+higher_x <- meta4props_percent %>%
+  pivot_longer(
+    cols        = -clusterName3,
+    names_to    = "RegionAcronym",
+    values_to   = "percent"
+  ) %>%
+  filter(percent > 70)
+```
+
+
+
+
+
+
+######======================= Fig S1 =================================##########
+
+###----- Load libraries and set directory
+```{r}
+library(qs)
+library(ggsankey)
+library(ggplot2)
+library(dplyr)
+
+suppFig1_dir <- paste0(Figures_dir, "/FigS1/")
+```
+
+###----- QCs
+# by lib
+```{r}
+VlnPlot_scCustom(seuObj, features = "nCount_SCT", group.by = "orig.ident", pt.size = 0)
+
+vlnPlot <- VlnPlot_scCustom(seuObj,
+  features = c("nFeature_RNA", "nCount_RNA"),
+  group.by = "orig.ident", pt.size = 0,
+  colors_use = origIdent_colors, num_columns = 1
+) &
+  theme(
+    axis.line = element_line(color = "#060606"),
+    axis.ticks = element_line(color = "#060606")
+  ) &
+  stat_summary(
+    fun = median, geom = "text", aes(label = round(..y..)),
+    hjust = -3, angle = 90, size = 4
+  ) & NoLegend() & RotatedAxis()
+
+ggsave(paste0(suppFig1_dir, "vlnPlot-", "nFeat&Count", "_byCluster.svg"),
+  plot = vlnPlot,
+  bg = "transparent", width = 10, height = 10
+)
+```
+
+# by major cell class
+```{r}
+major_cellClass_colors <- c("#5C798B", "#768E6D", "#A38C78", "#A1768F", "#D8B56D", "#8C8C8C")
+
+vlnPlot <- VlnPlot_scCustom(seuObj,
+  features = c("nFeature_RNA", "nCount_RNA"),
+  group.by = "cellClass_lvl2", pt.size = 0,
+  colors_use = major_cellClass_colors, num_columns = 1
+) &
+  theme(
+    axis.line = element_line(color = "#060606"),
+    axis.ticks = element_line(color = "#060606")
+  ) &
+  stat_summary(
+    fun = median, geom = "text", aes(label = round(..y..)),
+    hjust = -3, angle = 90, size = 4
+  ) & NoLegend() & RotatedAxis()
+
+ggsave(paste0(suppFig1_dir, "vlnPlot-", "nFeat&Count", "_byMajorCellClass.svg"),
+  plot = vlnPlot,
+  bg = "transparent", width = 3, height = 10
+)
+```
+
+# by subtype
+```{r}
+Idents(seuObj) <- "clusterName3"
+Gluts_Clust <- seuObj$clusterName3[grepl("Glut", seuObj$clusterName3)] %>% unique()
+GABA_Clust <- seuObj$clusterName3[grepl("LGE|MGE|CGE", seuObj$clusterName3)] %>% unique()
+Glia_Clust <- seuObj$clusterName3[!grepl("Glut|LGE|MGE|CGE", seuObj$clusterName3)] %>% unique()
+
+cluster_groups <- list(
+  Glia = Glia_Clust,
+  GABA = GABA_Clust,
+  Glut = Gluts_Clust
+)
+
+for (group_name in names(cluster_groups)) {
+  type <- cluster_groups[[group_name]]
+
+  vlnPlot_subtype <- VlnPlot_scCustom(seuObj,
+    features = c("nFeature_RNA", "nCount_RNA"),
+    idents = type,
+    group.by = "clusterName3", pt.size = 0,
+    colors_use = cluster_colors, num_columns = 1
+  ) &
+    theme(
+      axis.line = element_line(color = "#060606"),
+      axis.ticks = element_line(color = "#060606")
+    ) &
+    stat_summary(
+      fun = median, geom = "text", aes(label = round(..y..)),
+      hjust = -3, angle = 90, size = 4
+    ) &
+    NoLegend() & RotatedAxis()
+
+  ggsave(paste0(suppFig1_dir, "vlnPlot-", "nFeat&Count_", group_name, "_bySubtypeCellClass.svg"),
+    plot = vlnPlot_subtype,
+    bg = "transparent", width = length(type) / 3, height = 10
+  )
+}
+```
+
+
+###----- umaps
+```{r}
+u2 <- DimPlot(seuObj,
+  group.by = "RegionAcronym", shuffle = T,
+  cols = region_colors
+) +
+  coord_equal() +
+  ggtitle("Dissection") +
+  NoAxes() +
+  theme(legend.position = "right")
+
+u3 <- DimPlot(seuObj,
+  group.by = "BirdID", shuffle = T,
+  cols = paletteer_d("peRReo::calle13")
+) +
+  coord_equal() +
+  ggtitle("BirdID") +
+  NoAxes() +
+  theme(legend.position = "right")
+
+umap_comb <- u2 / u3
+
+ggsave(paste0(suppFig1_dir, "umap_byRegionAndBirdID.svg"),
+  plot = umap_comb,
+  bg = "transparent", width = 10, height = 15
+)
+```
+
+
+###----- Markers each cluster
+```{r}
+Idents(seuObj) <- "clusterName3"
+# seuObj <- PrepSCTFindMarkers(seuObj, assay = "SCTorigIdent3") # Minimum UMI unchanged. Skipping re-correction.
+seuObjMrks_roc <- FindAllMarkers(seuObj,
+  logfc.threshold = 1,
+  test.use = "roc",
+  only.pos = T,
+  recorrect_umi = F
+)
+saveRDS(seuObjMrks_roc, file = paste0(RDSfiles, "/Markers/20250718_allClusters_allnName2_roc_log1pos.rds"))
+
+seuObjMrks_wilcox <- FindAllMarkers(seuObj,
+  logfc.threshold = 1,
+  test.use = "wilcox",
+  only.pos = T,
+  recorrect_umi = F
+)
+saveRDS(seuObjMrks_wilcox, file = paste0(RDSfiles, "/Markers/20250718_allClusters_allnName2_wlcx_log1pos.rds"))
+
+top <- seuObjMrks_roc %>%
+  group_by(cluster) %>%
+  arrange(desc(power)) %>%
+  slice_head(n = 2) %>%
+  ungroup()
+
+clusterMrks_heat <- avgExpr_heatmap(clustAvg, unique(top$gene))
+clusterMrks_heat
+
+DotPlot(seuObj, features = unique(top$gene)) + RotatedAxis()
+```
+
+###----- Sankey plots from past dataset
+```{r}
+metaOfPub <- readRDS(file = "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/05c_ClassifyCells_subcluster_083024/RDS_files/meta_PubHVCnRA.rds") %>% select(cluster_int_sub2)
+
+seuObj <- AddMetaData(seuObj, metaOfPub)
+
+df_counts <- FetchData(seuObj, vars = c("cluster_int_sub2", "clusterName3")) %>%
+  filter(!is.na(cluster_int_sub2))
+
+df_long <- df_counts %>%
+  make_long(cluster_int_sub2, clusterName3)
+
+ggplot(df_long, aes(
+  x = x,
+  next_x = next_x,
+  node = node,
+  next_node = next_node,
+  fill = factor(node),
+  label = node
+)) +
+  geom_sankey() +
+  geom_sankey_label() +
+  theme_sankey(base_size = 16) +
+  NoLegend()
+```
+
+# glut
+```{r}
+df_counts_glut <- FetchData(seuObj, vars = c("cluster_int_sub2", "clusterName3")) %>%
+  filter(!is.na(cluster_int_sub2)) %>%
+  filter(grepl("Glut", cluster_int_sub2))
+
+df_long_glut <- df_counts_glut %>%
+  make_long(cluster_int_sub2, clusterName3) %>%
+  group_by(x, node, next_x, next_node) %>%
+  filter(n() >= 15) %>%
+  ungroup()
+
+glut_sankey <- ggplot(df_long_glut, aes(
+  x = x,
+  next_x = next_x,
+  node = node,
+  next_node = next_node,
+  fill = factor(node),
+  label = node
+)) +
+  geom_sankey(flow.alpha = 0.5) +
+  geom_sankey_label(size = 3.5, color = "#6509bc", fill = "#65ffbc") + # weird colors for svg handle
+  scale_fill_viridis_d(option = "B") +
+  # scale_fill_manual(values = cluster_colors) +
+  theme_sankey(base_size = 16) +
+  NoLegend()
+
+ggsave(paste0(suppFig1_dir, "sankey_PubGlutsToNewGluts.svg"),
+  plot = glut_sankey,
+  bg = "transparent", width = 4, height = 6
+)
+```
+
+# GABA
+```{r}
+df_counts_GABA <- FetchData(seuObj, vars = c("cluster_int_sub2", "clusterName3")) %>%
+  filter(!is.na(cluster_int_sub2)) %>%
+  filter(grepl("GABA", cluster_int_sub2))
+
+df_long_GABA <- df_counts_GABA %>%
+  make_long(cluster_int_sub2, clusterName3) %>%
+  group_by(x, node, next_x, next_node) %>%
+  filter(n() >= 15) %>%
+  ungroup()
+
+# df_long_GABA$node <- factor(df_long_GABA$node,
+#   levels = rev(c(levels(factor(df_counts_GABA$cluster_int_sub2)),
+#                  levels(factor(df_counts_GABA$clusterName3)))))
+
+GABA_sankey <- ggplot(df_long_GABA, aes(
+  x = x,
+  next_x = next_x,
+  node = node,
+  next_node = next_node,
+  fill = factor(node),
+  label = node
+)) +
+  geom_sankey(flow.alpha = 0.5) +
+  geom_sankey_label(size = 3.5, color = "#6509bc", fill = "#65ffbc") + # weird colors for svg handle
+  scale_fill_viridis_d(option = "B") +
+  # scale_fill_manual(values = cluster_colors) +
+  theme_sankey(base_size = 16) +
+  NoLegend()
+
+ggsave(paste0(suppFig1_dir, "sankey_PubGABAsToNewGABAs.svg"),
+  plot = GABA_sankey,
+  bg = "transparent", width = 4, height = 6
+)
+```
+
+# others
+```{r}
+df_counts_glia <- FetchData(seuObj, vars = c("cluster_int_sub2", "clusterName3")) %>%
+  filter(!is.na(cluster_int_sub2)) %>%
+  filter(!grepl("GABA|Glut", cluster_int_sub2))
+
+df_long_glia <- df_counts_glia %>%
+  make_long(cluster_int_sub2, clusterName3) %>%
+  group_by(x, node, next_x, next_node) %>%
+  filter(n() >= 15) %>%
+  ungroup()
+
+glia_sankey <- ggplot(df_long_glia, aes(
+  x = x,
+  next_x = next_x,
+  node = node,
+  next_node = next_node,
+  fill = factor(node),
+  label = node
+)) +
+  geom_sankey(flow.alpha = 0.5) +
+  geom_sankey_label(size = 3.5, color = "#6509bc", fill = "#65ffbc") + # weird colors for svg handle
+  scale_fill_viridis_d(option = "B") +
+  # scale_fill_manual(values = cluster_colors) +
+  theme_sankey(base_size = 16) +
+  NoLegend()
+
+ggsave(paste0(suppFig1_dir, "sankey_PubGliasToNewGlias.svg"),
+  plot = glia_sankey,
+  bg = "transparent", width = 4, height = 6
+)
+```
+
+
+
+###----- Marker genes for nomenclature for gluts
+```{r}
+## Prep
+gluts_seuObj <- subset(seuObj,
+  subset = clusterName3 %in% unique(seuObj$clusterName3[grepl("Glut", seuObj$clusterName3)])
+)
+Idents(gluts_seuObj) <- "clusterName3"
+
+TrxnFcts <- tf_list$Name[tf_list$IsTF == "Yes"]
+
+## select genes
+seuObjMrks_wilcox <- readRDS(file = paste0(RDSfiles, "/Markers/20250718_allClusters_allnName2_wlcx_log1pos.rds")) %>%
+  filter(p_val_adj < 0.05 &
+    !grepl("^LOC\\d{4}", gene) &
+    # gene %in% TrxnFcts &
+    grepl("Glut", cluster)) %>%
+  Add_Pct_Diff() %>%
+  filter(pct_diff > 0.3)
+
+seuObjMrks_wilcox$cluster <- factor(seuObjMrks_wilcox$cluster,
+  levels = dendro_order_3
+)
+
+top_markers <- Extract_Top_Markers(seuObjMrks_wilcox,
+  num_genes = 3,
+  named_vector = F, make_unique = T
+)
+
+ClustrMrks_dot <- DotPlot_scCustom(gluts_seuObj,
+  features = top_markers,
+  dot.min = 0.01,
+  colors_use = colorRampPalette(c("#f0f0f0", "#020202"))(100),
+  x_lab_rotate = T
+)
+
+#-- Manually chosen the genes
+useMrks <- c(
+  "SEMA3E", "ALDH1A2",
+  "CALCB", "PAPPA",
+  "SLC4A11", "IRAG1",
+  "CUX1",
+  "GFRA1", "UTS2B",
+  "NTS", "SCUBE1",
+  "SATB2", "KIAA1217",
+  "CACNA1H",
+  "DACH1", "DACH2"
+)
+ClustrMrks_dot_man <- DotPlot_scCustom(gluts_seuObj,
+  features = useMrks,
+  dot.min = 0.01,
+  colors_use = colorRampPalette(c("#f0f0f0", "#020202"))(100),
+  x_lab_rotate = T
+)
+```
