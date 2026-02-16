@@ -195,7 +195,81 @@ ggsave(filename = paste0(PaperFigs_supp, "/stackplot_GABAcluster_byOridIdent.svg
 
 ```
 
+# Ratio and proportion plots
+```{r}
+allCells_meta <- FetchData(seuObj, vars = c("orig.ident", "RegionAcronym", "clusterName3", "Allen_classLvl2", "Allen_classLvl3"))
+my_comparisons <- list( c("LMAN", "An"), c("RA", "Arco"), c("HVC", "NC"), c("HVC", "NCM"), c("NC", "NCM"))
 
+#-- GABA to Gluts
+allCells_meta_2 <- allCells_meta %>% filter(Allen_classLvl3 != "Neurogenic" & Allen_classLvl2 %in%  c("Glutamatergic", "GABAergic"))
+length(unique(allCells_meta_2$clusterName3))
+
+allCells_meta_plot <- allCells_meta_2 %>% 
+  select(-clusterName3, -Allen_classLvl3) %>% 
+  count(orig.ident, RegionAcronym, Allen_classLvl2) %>%
+  pivot_wider(names_from = Allen_classLvl2, values_from = n, values_fill = 0) %>% 
+  mutate(total = Glutamatergic + GABAergic) %>%
+  mutate(GABAprop = GABAergic / total) %>% 
+  mutate(ratioGlut2Gaba = Glutamatergic / GABAergic)
+
+allCells_meta_plot$RegionAcronym <- factor(allCells_meta_plot$RegionAcronym, levels = lvl_order)
+
+gabaRatio <- ggboxplot(allCells_meta_plot, x = "RegionAcronym", y = "GABAprop", # can do GABAprop or ratioGlut2Gaba
+          color = "RegionAcronym", palette = custom_colors, 
+          add = "jitter") +
+  stat_compare_means(comparisons = my_comparisons, label = "p.signif", color = "#060606") +
+  geom_hline(yintercept = mean(allCells_meta_plot$GABAprop), linetype = 2, color = "#060606") + 
+  stat_compare_means(label = "p.signif", method = "t.test",
+                     ref.group = ".all.") 
+
+
+#-- Specific GABA of interest
+allCells_meta_3 <- allCells_meta %>% filter(Allen_classLvl3 != "Neurogenic" & Allen_classLvl2 == "GABAergic")
+classes <- unique(allCells_meta_3$clusterName3)
+plots_list <- list()
+
+for (class in classes) {
+  allCells_meta_plot2 <- allCells_meta_3 %>% 
+  select(-Allen_classLvl2, -Allen_classLvl3) %>% 
+  count(orig.ident, RegionAcronym, clusterName3) %>%
+  pivot_wider(names_from = clusterName3, values_from = n, values_fill = 0)  %>%
+  mutate(total = rowSums(across(where(is.numeric)))) %>%
+  mutate(ratioOfInterest = !!sym(class) / total)
+
+  allCells_meta_plot2$RegionAcronym <- factor(allCells_meta_plot2$RegionAcronym, levels = lvl_order)
+  
+  plots_list[[paste(class, "plot", sep = "_")]] <- ggboxplot(allCells_meta_plot2, x = "RegionAcronym", y = "ratioOfInterest", # can do GABAprop or ratioGlut2Gaba
+            color = "RegionAcronym", palette = custom_colors, 
+            add = "jitter",
+            ylab = paste(class, ": GABA tot.")) +
+    stat_compare_means(comparisons = my_comparisons, label = "p.signif", color = "#060606") +
+    geom_hline(yintercept = mean(allCells_meta_plot2$ratioOfInterest), linetype = 2, color = "#060606") + 
+    stat_compare_means(label = "p.signif", method = "t.test",
+                       ref.group = ".all.") 
+
+  # ggsave(filename = paste0(Figures_dir, "/PropPlots/", paste(class, "plot.tiff")), plot = plots_list[[paste(class, "plot")]],
+  #        width = 11, height = 7)
+  
+}
+
+
+#== Plot For Figure
+GabaProps_ofInterest <- gabaRatio +
+  plots_list[["MGE_PVALB(40)_plot"]] + 
+  plots_list[["MGE_song(33)_plot"]] + 
+  plots_list[["MGE_song(39)_plot"]] + 
+  plot_layout(guides = "collect", ncol = 1) &
+  theme(axis.title.x = element_blank(), 
+        axis.text.x = element_blank(), 
+        axis.ticks.x = element_line(color = "#060606"),
+        axis.ticks.y = element_line(color = "#060606"),
+        axis.line = element_line(color = "#060606")) &
+  NoLegend()
+
+ggsave(filename = paste0(PaperFigs, "/boxplot_GABAcluster_PropsOfInterest.svg"), plot = GabaProps_ofInterest,
+       width = 4, height = 8)
+
+```
 
 #============ SUPPLEMENTARY FIGS ==========================================#####
 # HeatMap
