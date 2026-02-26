@@ -102,9 +102,9 @@ saveRDS(arco_degs_list, file.path(RDS_files, "arco_AllDegs.rds"))
 
 arco_degs_df <- bind_rows(arco_degs_list, .id = "comparison") #--save output
 write.csv(arco_degs_df,
-  file = file.path(Tables_dir, "nido_DEGs_all_comparisons.csv"),
+  file = file.path(Tables_dir, "arco_DEGs_all_comparisons.csv"),
   row.names = FALSE
-) #--save output
+)
 
 arco_degs_list_sig_up <- lapply(arco_degs_list, function(df) {
   filter(df, p_val_adj < 0.05 & avg_log2FC > 0)
@@ -155,11 +155,11 @@ for (dir_name in names(both_upNdown)) {
 
   # save df for upset
   write.csv(upset_results_arco[[dir_name]][["arco_pair"]][["upset_df"]],
-    file = file.path(Tables_dir, "arco_DEGs_all_comparisons.csv"), row.names = FALSE
-  ) #-- save output
+    file = paste0(Tables_dir, "/arco_upsetDEGs_", dir_name, ".csv"), row.names = FALSE
+  )
 }
 
-saveRDS(upset_results_arco, file.path(RDS_files, "upsetDF_nido.rds"))
+saveRDS(upset_results_arco, file.path(RDS_files, "upsetDF_arco.rds"))
 
 arco_up <- upset_results_arco$up$upsetR
 ggsave(file.path(Figures_dir, "upset_byPallField_arcoUp.svg"),
@@ -192,8 +192,8 @@ if (re_do_mrks_2) {
 
       res <- FindMarkers(
         object   = seuObj_matNeu_agg,
-        assay    = "RNA",
         ident.1  = cluster1,
+        assay    = "RNA",
         ident.2  = cluster2,
         test.use = "DESeq2",
         only.pos = F,
@@ -217,7 +217,7 @@ nido_degs_df <- bind_rows(nido_degs_list, .id = "comparison") #--save output
 write.csv(nido_degs_df,
   file = file.path(Tables_dir, "nido_DEGs_all_comparisons.csv"),
   row.names = FALSE
-) #--save output
+)
 
 nido_degs_list_sig_up <- lapply(nido_degs_list, function(df) {
   filter(df, p_val_adj < 0.05 & avg_log2FC > 0)
@@ -276,8 +276,8 @@ for (dir_name in names(both_upNdown)) {
 
   # save df for upset
   write.csv(upset_results_nido[[dir_name]][["nido_pair"]][["upset_df"]],
-    file = file.path(Tables_dir, "nido_DEGs_all_comparisons.csv"), row.names = FALSE
-  ) #-- save output
+    file = paste0(Tables_dir, "/nido_upsetDEGs_", dir_name, ".csv"), row.names = FALSE
+  )
 }
 
 saveRDS(upset_results_nido, file.path(RDS_files, "upsetDF_nido.rds"))
@@ -296,9 +296,10 @@ ggsave(file.path(Figures_dir, "upset_byPallField_nidoDown.svg"),
 
 
 #### === another upset with just song/shell clusters to check that overlap
+combUse <- list()
 for (dir in c("up", "down")) {
   ## ---- select data ----
-  nidoUse <- upset_results_nido[[dir]]$nido_pair[[dir]]$upset_df %>%
+  nidoUse <- upset_results_nido[[dir]]$nido_pair$upset_df %>%
     select(
       genes,
       "Glut-HVC(7)", "Glut-HVC(8)", "Glut-NidoHyperPall(28)",
@@ -312,14 +313,18 @@ for (dir in c("up", "down")) {
     )
 
   ## ---- combine ----
-  combUse <- full_join(nidoUse, arcoUse, by = "genes") %>%
+  combUse[[dir]] <- full_join(nidoUse, arcoUse, by = "genes") %>%
     mutate(across(-genes, ~ replace_na(.x, FALSE))) %>%
     filter(if_any(-genes, identity))
 
+  write.csv(combUse[[dir]],
+    file = paste0(Tables_dir, "/songGluts_sharedDEGs_", dir, ".csv"), row.names = FALSE
+  )
+
   ## ---- upset ----
   upsetShareXPallial <- upset(
-    combUse,
-    intersect = colnames(combUse),
+    combUse[[dir]],
+    intersect = colnames(combUse[[dir]]),
     sort_sets = FALSE,
     sort_intersections = FALSE,
     min_size = 1,
@@ -350,7 +355,7 @@ for (dir in c("up", "down")) {
     )
   )
 
-    ## ---- save ----
+  ## ---- save ----
   ggsave(
     file.path(
       Figures_dir,
