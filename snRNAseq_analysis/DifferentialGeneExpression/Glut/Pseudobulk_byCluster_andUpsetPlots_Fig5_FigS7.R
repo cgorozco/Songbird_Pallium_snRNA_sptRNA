@@ -11,6 +11,10 @@ source("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/
 
 # LOAD DIRECTORIES
 Figures_dir <- "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/21_DGE_whyNeuronsSpecial/Figures/glut"
+Tables_dir <- "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/21_DGE_whyNeuronsSpecial/Tables/glut"
+dir.create(Tables_dir, recursive = T)
+RDS_files <- "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/21_DGE_whyNeuronsSpecial/RDSfiles/gluts"
+dir.create(RDS_files, recursive = T)
 
 # LOAD DATA AND PREP
 seuObj <- readRDS(
@@ -82,12 +86,26 @@ if (re_do_mrks_1) {
         only.pos = F,
         min.pct  = 1
       ) %>%
-        tibble::rownames_to_column("gene")
+        tibble::rownames_to_column("gene") %>%
+        mutate(
+          cluster_1 = cluster1,
+          cluster_2 = cluster2
+        ) %>%
+        filter(p_val_adj < 0.05)
 
       arco_degs_list[[comp_name]] <- res
     }
   }
 }
+
+saveRDS(arco_degs_list, file.path(RDS_files, "arco_AllDegs.rds"))
+
+arco_degs_df <- bind_rows(arco_degs_list, .id = "comparison") #--save output
+write.csv(arco_degs_df,
+  file = file.path(Tables_dir, "nido_DEGs_all_comparisons.csv"),
+  row.names = FALSE
+) #--save output
+
 arco_degs_list_sig_up <- lapply(arco_degs_list, function(df) {
   filter(df, p_val_adj < 0.05 & avg_log2FC > 0)
 })
@@ -133,7 +151,15 @@ for (dir_name in names(both_upNdown)) {
     )
   )
   upset_results_arco[[dir_name]]$upsetR <- upsetR_plot
+  rm(arco_pair)
+
+  # save df for upset
+  write.csv(upset_results_arco[[dir_name]][["arco_pair"]][["upset_df"]],
+    file = file.path(Tables_dir, "arco_DEGs_all_comparisons.csv"), row.names = FALSE
+  ) #-- save output
 }
+
+saveRDS(upset_results_arco, file.path(RDS_files, "upsetDF_nido.rds"))
 
 arco_up <- upset_results_arco$up$upsetR
 ggsave(file.path(Figures_dir, "upset_byPallField_arcoUp.svg"),
@@ -173,12 +199,25 @@ if (re_do_mrks_2) {
         only.pos = F,
         min.pct  = 1
       ) %>%
-        tibble::rownames_to_column("gene")
+        tibble::rownames_to_column("gene") %>%
+        mutate(
+          cluster_1 = cluster1,
+          cluster_2 = cluster2
+        ) %>%
+        filter(p_val_adj < 0.05)
 
       nido_degs_list[[comp_name]] <- res
     }
   }
 }
+
+saveRDS(nido_degs_list, file.path(RDS_files, "nido_AllDegs.rds"))
+
+nido_degs_df <- bind_rows(nido_degs_list, .id = "comparison") #--save output
+write.csv(nido_degs_df,
+  file = file.path(Tables_dir, "nido_DEGs_all_comparisons.csv"),
+  row.names = FALSE
+) #--save output
 
 nido_degs_list_sig_up <- lapply(nido_degs_list, function(df) {
   filter(df, p_val_adj < 0.05 & avg_log2FC > 0)
@@ -233,7 +272,15 @@ for (dir_name in names(both_upNdown)) {
     )
   )
   upset_results_nido[[dir_name]]$upsetR <- upsetR_plot
+  rm(nido_pair)
+
+  # save df for upset
+  write.csv(upset_results_nido[[dir_name]][["nido_pair"]][["upset_df"]],
+    file = file.path(Tables_dir, "nido_DEGs_all_comparisons.csv"), row.names = FALSE
+  ) #-- save output
 }
+
+saveRDS(upset_results_nido, file.path(RDS_files, "upsetDF_nido.rds"))
 
 nido_up <- upset_results_nido$up$upsetR
 ggsave(file.path(Figures_dir, "upset_byPallField_nidoUp.svg"),
@@ -251,7 +298,7 @@ ggsave(file.path(Figures_dir, "upset_byPallField_nidoDown.svg"),
 #### === another upset with just song/shell clusters to check that overlap
 for (dir in c("up", "down")) {
   ## ---- select data ----
-  nidoUse <- upset_results_nido[[dir]]$nido_pair$upset_df %>%
+  nidoUse <- upset_results_nido[[dir]]$nido_pair[[dir]]$upset_df %>%
     select(
       genes,
       "Glut-HVC(7)", "Glut-HVC(8)", "Glut-NidoHyperPall(28)",
@@ -303,7 +350,7 @@ for (dir in c("up", "down")) {
     )
   )
 
-  ## ---- save ----
+    ## ---- save ----
   ggsave(
     file.path(
       Figures_dir,
