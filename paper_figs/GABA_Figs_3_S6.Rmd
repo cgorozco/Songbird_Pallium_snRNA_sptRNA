@@ -14,7 +14,7 @@ library(scCustomize)
 library(ggpubr)
 library(readxl)
 library(ggrastr)
-library(scico)
+library(writexl)
 
 source("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/Functions/CommonLevelsColors.R")
 source("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/Functions/commonViz.R")
@@ -157,12 +157,30 @@ ggsave(
   filename = paste0(PaperFigs_supp, "/stackplot_GABAcluster_byOridIdent.svg"), plot = stck_supp,
   width = 15, height = 7
 )
+
+#-- for tables
+Gaba_seu_meta <- Gaba_seu_meta %>%
+  filter(clusterName3 %in% GABA_Clust) %>%
+  droplevels()
+
+byRgn <- table(Gaba_seu_meta$clusterName3, Gaba_seu_meta$RegionAcronym)
+write.csv(as.data.frame.matrix(byRgn), file = paste0(Tables_dir, "/Fig4/Count_ofCluster_ByRgn.csv"))
+
+byRgn_prop <- prop.table(byRgn, margin = 1) %>% as.data.frame.matrix()
+write.csv(as.data.frame.matrix(byRgn), file = paste0(Tables_dir, "/Fig4/Pct_ofCluster_ByRgn.csv"))
+
+byOgId <- table(Gaba_seu_meta$clusterName3, Gaba_seu_meta$orig.ident)
+write.csv(as.data.frame.matrix(byRgn), file = paste0(Tables_dir, "/Fig4/Count_ofCluster_ByOgId.csv"))
+
+byOgId_prop <- prop.table(byOgId, margin = 1) %>% as.data.frame.matrix()
+write.csv(as.data.frame.matrix(byRgn), file = paste0(Tables_dir, "/Fig4/Pct_ofCluster_ByOgId.csv"))
 ```
 
 # Ratio and proportion plots
 ```{r}
 allCells_meta <- FetchData(seuObj, vars = c("orig.ident", "RegionAcronym", "clusterName3", "Allen_classLvl2", "Allen_classLvl3"))
 my_comparisons <- list(c("LMAN", "An"), c("RA", "Arco"), c("HVC", "NC"), c("HVC", "NCM"), c("NC", "NCM"))
+excel_list <- list()
 
 #-- GABA to Gluts
 allCells_meta_2 <- allCells_meta %>% filter(Allen_classLvl3 != "Neurogenic" & Allen_classLvl2 %in% c("Glutamatergic", "GABAergic"))
@@ -177,6 +195,7 @@ allCells_meta_plot <- allCells_meta_2 %>%
   mutate(ratioGlut2Gaba = Glutamatergic / GABAergic)
 
 allCells_meta_plot$RegionAcronym <- factor(allCells_meta_plot$RegionAcronym, levels = lvl_order)
+excel_list[["GABA_Glut_props"]] <- allCells_meta_plot
 
 gabaRatio <- ggboxplot(allCells_meta_plot,
   x = "RegionAcronym", y = "GABAprop", # can do GABAprop or ratioGlut2Gaba
@@ -190,6 +209,13 @@ gabaRatio <- ggboxplot(allCells_meta_plot,
     ref.group = ".all."
   )
 
+gabaGlut_ratio_stats <- compare_means(
+  GABAprop ~ RegionAcronym,
+  data = allCells_meta_plot,
+  comparisons = my_comparisons,
+  method = "t.test"
+)
+excel_list[["GABA_Glut_stats"]] <- gabaGlut_ratio_stats
 
 #-- Specific GABA of interest
 allCells_meta_3 <- allCells_meta %>% filter(Allen_classLvl3 != "Neurogenic" & Allen_classLvl2 == "GABAergic")
@@ -206,6 +232,16 @@ for (class in classes) {
 
   allCells_meta_plot2$RegionAcronym <- factor(allCells_meta_plot2$RegionAcronym, levels = lvl_order)
 
+  cluster_stats <- compare_means(
+    ratioOfInterest ~ RegionAcronym,
+    data = allCells_meta_plot2,
+    comparisons = my_comparisons,
+    method = "t.test"
+  )
+
+  excel_list[[paste0(class, "_stats")]] <- cluster_stats
+
+  # plots
   plots_list[[paste(class, "plot", sep = "_")]] <- ggboxplot(allCells_meta_plot2,
     x = "RegionAcronym", y = "ratioOfInterest", # can do GABAprop or ratioGlut2Gaba
     color = "RegionAcronym", palette = custom_colors,
@@ -218,11 +254,19 @@ for (class in classes) {
       label = "p.signif", method = "t.test",
       ref.group = ".all."
     )
-
-  # ggsave(filename = paste0(Figures_dir, "/PropPlots/", paste(class, "plot.tiff")), plot = plots_list[[paste(class, "plot")]],
-  #        width = 11, height = 7)
 }
 
+## a table with all the ratios, ran above
+allGABA_ratios <- allCells_meta_3 %>%
+  select(-Allen_classLvl2, -Allen_classLvl3) %>%
+  count(orig.ident, RegionAcronym, clusterName3) %>%
+  pivot_wider(names_from = clusterName3, values_from = n, values_fill = 0) %>%
+  mutate(total = rowSums(across(where(is.numeric)))) %>%
+  # Compute ratio for each cluster dynamically
+  mutate(across(all_of(classes), ~ .x / total, .names = "ratio_{.col}"))
+
+excel_list[["AllGABA_ratios"]] <- allGABA_ratios
+write_xlsx(excel_list, path = paste0(Tables_dir, "/Fig4/GabaPropsAndRatios.xlsx"))
 
 # == Plot For Figure
 GabaProps_ofInterest <- gabaRatio +
