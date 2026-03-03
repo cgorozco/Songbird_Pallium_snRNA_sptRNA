@@ -59,8 +59,22 @@ ggsave(
   width = 4, height = 2
 )
 
+# save as table
+only_sst <- setdiff(sst_common_up_spec, pv_common_up_spec)
+only_pv  <- setdiff(pv_common_up_spec, sst_common_up_spec)
+shared   <- intersect(sst_common_up_spec, pv_common_up_spec)
 
-### pick interesting genes
+max_len <- max(length(only_sst), length(only_pv), length(shared))
+
+ven_tidy <- tibble(
+  Song_SST_like = c(only_sst, rep(NA, max_len - length(only_sst))),
+  Overlap       = c(shared,   rep(NA, max_len - length(shared))),
+  Song_PV_like  = c(only_pv,  rep(NA, max_len - length(only_pv)))
+)
+
+write_csv(ven_tidy, file.path(Tables_dir, "GABA_venn_zfNchk_PVnSST.csv"))
+
+### explore interesting genes
 asd_tfs <- intersect(TFs, asd_genes)
 
 pv_song_GOI_asdTF <- setdiff(intersect(pv_common_up_spec, asd_tfs), up_both) # this is to keep in mind
@@ -99,4 +113,3 @@ for (nm in names(geneLists)) {
     width = 4, height = length(use) / 2
   )
 }
-
