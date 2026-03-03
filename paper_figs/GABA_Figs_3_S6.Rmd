@@ -205,7 +205,8 @@ gabaRatio <- ggboxplot(allCells_meta_plot,
   stat_compare_means(comparisons = my_comparisons, label = "p.signif", color = "#060606") +
   geom_hline(yintercept = mean(allCells_meta_plot$GABAprop), linetype = 2, color = "#060606") +
   stat_compare_means(
-    label = "p.signif", method = "t.test",
+    label = "p.signif", 
+    method = "wilcox.test",
     ref.group = ".all."
   )
 
@@ -213,7 +214,7 @@ gabaGlut_ratio_stats <- compare_means(
   GABAprop ~ RegionAcronym,
   data = allCells_meta_plot,
   comparisons = my_comparisons,
-  method = "t.test"
+  method = "wilcox.test"
 )
 excel_list[["GABA_Glut_stats"]] <- gabaGlut_ratio_stats
 
@@ -236,7 +237,7 @@ for (class in classes) {
     ratioOfInterest ~ RegionAcronym,
     data = allCells_meta_plot2,
     comparisons = my_comparisons,
-    method = "t.test"
+    method = "wilcox.test"
   )
 
   excel_list[[paste0(class, "_stats")]] <- cluster_stats
@@ -251,7 +252,8 @@ for (class in classes) {
     stat_compare_means(comparisons = my_comparisons, label = "p.signif", color = "#060606") +
     geom_hline(yintercept = mean(allCells_meta_plot2$ratioOfInterest), linetype = 2, color = "#060606") +
     stat_compare_means(
-      label = "p.signif", method = "t.test",
+      label = "p.signif", 
+      method = "wilcox.test",
       ref.group = ".all."
     )
 }
