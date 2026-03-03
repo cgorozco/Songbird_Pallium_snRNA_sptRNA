@@ -167,13 +167,13 @@ byRgn <- table(Gaba_seu_meta$clusterName3, Gaba_seu_meta$RegionAcronym)
 write.csv(as.data.frame.matrix(byRgn), file = paste0(Tables_dir, "/Fig4/Count_ofCluster_ByRgn.csv"))
 
 byRgn_prop <- prop.table(byRgn, margin = 1) %>% as.data.frame.matrix()
-write.csv(as.data.frame.matrix(byRgn), file = paste0(Tables_dir, "/Fig4/Pct_ofCluster_ByRgn.csv"))
+write.csv(as.data.frame.matrix(byRgn_prop), file = paste0(Tables_dir, "/Fig4/Pct_ofCluster_ByRgn.csv"))
 
 byOgId <- table(Gaba_seu_meta$clusterName3, Gaba_seu_meta$orig.ident)
-write.csv(as.data.frame.matrix(byRgn), file = paste0(Tables_dir, "/Fig4/Count_ofCluster_ByOgId.csv"))
+write.csv(as.data.frame.matrix(byOgId), file = paste0(Tables_dir, "/Fig4/Count_ofCluster_ByOgId.csv"))
 
 byOgId_prop <- prop.table(byOgId, margin = 1) %>% as.data.frame.matrix()
-write.csv(as.data.frame.matrix(byRgn), file = paste0(Tables_dir, "/Fig4/Pct_ofCluster_ByOgId.csv"))
+write.csv(as.data.frame.matrix(byOgId_prop), file = paste0(Tables_dir, "/Fig4/Pct_ofCluster_ByOgId.csv"))
 ```
 
 # Ratio and proportion plots
