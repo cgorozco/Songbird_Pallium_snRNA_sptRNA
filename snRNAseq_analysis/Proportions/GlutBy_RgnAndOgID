@@ -1,0 +1,123 @@
+---
+title: "Cell Class proportions for several resolutions and grouping of gluts"
+output: html_notebook
+---
+
+###========== SET UP
+# LOAD LIBRARIES
+```{r}
+library(Seurat)
+library(scCustomize)
+library(tidyverse)
+library(patchwork)
+library(readr)
+library(readxl)
+
+source("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/Functions/stackplots.R")
+source("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/Functions/CommonLevelsColors.R")
+
+options(future.globals.maxSize = 100000 * 1024^10)
+
+```
+
+# SET DIRECTORIES
+```{r}
+setwd('/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/10_CellClass_Proportions')
+root_dir <- '/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/10_CellClass_Proportions'
+
+RDSfiles <- paste0(root_dir, "/RDS_files")
+dir.create(RDSfiles, showWarnings = F)
+
+Figures_dir <- paste0(root_dir, "/Figures")
+dir.create(Figures_dir, showWarnings = F)
+
+Tables_dir <- paste0(root_dir, "/Tables")
+dir.create(Tables_dir, showWarnings = F)
+```
+
+
+# LOADING DATSETS
+```{r}
+seuObj <- readRDS("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/06_Taxonomy/AllenClustering/RDS_files/OutputUse/seuObj_iterCluster_clean_20250131.rds")
+source("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/Functions/addMetaTo_seuObj.R")
+
+```
+
+# colors
+```{r}
+cluster_colors <- c(
+  sample(colorRampPalette(c("#116834", "#b3c6bb"))(length(unique(seuObj$clusterName3[seuObj$Allen_classLvl2 == "Glutamatergic"])))),
+  c("#a0acff", "#5552d5", sample(colorRampPalette(c("#c3f1fc", "#1f65b5"))(12)), sample(colorRampPalette(c("#76d8bb", "#529e9a"))(5))),
+  colorRampPalette(c("#ba7b43", "#cdbbac"))(length(unique(seuObj$clusterName3[seuObj$Allen_classLvl2 == "Astroependymal"]))),
+  colorRampPalette(c("#c4a9b9", "#79596b"))(length(unique(seuObj$clusterName3[seuObj$Allen_classLvl2 == "OPC_Oligo"]))),
+  colorRampPalette(c("#D8B56D", "#8C8C8C"))(length(unique(seuObj$clusterName3[seuObj$Allen_classLvl2 %in% c("Micro", "Endo")])))
+  )
+
+cluster_colors <- setNames(cluster_colors, dendro_order_3)
+ogId_cols <- setNames(origIdent_colors, origIdent_lvls)
+
+```
+
+
+###======== ANALYSIS
+## STACKPLOTS
+```{r}
+metaUse <- FetchData(seuObj, vars = c("RegionAcronym", "clusterName3", "cn3_class", "orig.ident"))
+metaUse$RegionAcronym <- factor(metaUse$RegionAcronym , levels = lvl_order)
+metaUse$clusterName3 <- factor(metaUse$clusterName3 , levels = dendro_order_3)
+
+stackedbarplot_colors(metaUse,"clusterName3", "RegionAcronym",
+                      custom_colors = region_colors, 
+                      level_order = lvl_order)
+
+gluts <- coarse_lvl$Cluster[coarse_lvl$Class == "Glutamatergic" &
+                              coarse_lvl$Subclass != "Neurogenic"]
+metaUse_gluts <- filter(metaUse, clusterName3 %in% gluts)
+stackedbarplot_colors(metaUse_gluts,"clusterName3", "RegionAcronym",
+                      custom_colors = region_colors, 
+                      level_order = lvl_order)
+
+# order by rgn of origin
+glutLvls_byRgnPct <- c("Glut-RA(19)", "Glut-RA(18)", "Glut-ArcoPall(27)", "Glut-Arco(1)", "Glut-Arco(10)",
+                       "Glut-HVC(7)", "Glut-HVC(8)", "Glut-NidoHyperPall(28)", "Glut-NidoHyperPall(23)",
+                       "Glut-NidoHyperPall(24)", "Glut-NidoHyperPall(26)", "Glut-NidoHyperPall(20)",
+                       "Glut-LMAN(44)", "Glut-LMAN(45)",
+                       "Glut(21)", 
+                       "Glut-NidoHyperPall(25)", "Glut-Hyper(9)",
+                       "Glut-MesoPall(6)", "Glut-MesoPall(5)", "Glut-MesoPall(29)", "Glut-MesoPall(30)",  "Glut-MesoPall(2)"
+                                              )
+
+metaUse_gluts$clusterName3 <- factor(metaUse_gluts$clusterName3 , levels = glutLvls_byRgnPct)
+glutsClust_byRgn <- stackedbarplot_colors(metaUse_gluts,"clusterName3", "RegionAcronym",
+                                          custom_colors = region_colors, 
+                                          level_order = lvl_order)
+ggsave(file.path(Figures_dir, "stkPlt_glutsMature_colRgn.svg"), plot = glutsClust_byRgn,
+       width = 5, height = 4.5)
+
+glutsClust_byOgId <- stackedbarplot_colors(metaUse_gluts,"clusterName3", "orig.ident",
+                                            custom_colors = origIdent_colors, 
+                                            level_order = origIdent_lvls)
+ggsave(file.path(Figures_dir, "stkPlt_glutsMature_colOgId.svg"), plot = glutsClust_byOgId,
+       width = 8, height = 6)
+
+# save as tables
+byRgn <- table(metaUse_gluts$clusterName3, metaUse_gluts$RegionAcronym)
+write.csv(as.data.frame.matrix(byRgn), file = paste0(Tables_dir, "/GlutProportions/Count_ofCluster_ByRgn.csv"))
+
+byRgn_prop <- prop.table(byRgn, margin = 1) %>% as.data.frame.matrix()
+write.csv(as.data.frame.matrix(byRgn_prop), file = paste0(Tables_dir, "/GlutProportions/Pct_ofCluster_ByRgn.csv"))
+
+byOgId <- table(metaUse_gluts$clusterName3, metaUse_gluts$orig.ident)
+write.csv(as.data.frame.matrix(byOgId), file = paste0(Tables_dir, "/GlutProportions/Count_ofCluster_ByOgId.csv"))
+
+byOgId_prop <- prop.table(byOgId, margin = 1) %>% as.data.frame.matrix()
+write.csv(as.data.frame.matrix(byOgId_prop), file = paste0(Tables_dir, "/GlutProportions/Pct_ofCluster_ByOgId.csv"))
+
+
+```
+
+
+
+
+
+
