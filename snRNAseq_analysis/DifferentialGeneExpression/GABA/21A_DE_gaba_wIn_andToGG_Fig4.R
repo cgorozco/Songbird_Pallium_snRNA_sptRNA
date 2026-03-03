@@ -1,6 +1,4 @@
 # ========== SET UP
-Fig_dir <- "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/21_DGE_whyNeuronsSpecial/Figures"
-
 library(Seurat)
 library(scCustomize)
 library(tidyverse)
@@ -9,11 +7,19 @@ library(readr)
 library(readxl)
 library(EnhancedVolcano)
 library(ggrastr)
+library(writexl)
+
 source("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/Functions/moduleScore_plots.R")
 source("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/Functions/CommonLevelsColors.R")
 
 options(future.globals.maxSize = 100000 * 1024^10)
 
+# SET UP DIRECTORIES
+Fig_dir <- "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/21_DGE_whyNeuronsSpecial/Figures"
+Tables_dir <- "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/21_DGE_whyNeuronsSpecial/Tables/gaba"
+dir.create(Tables_dir, recursive = T)
+
+# LOAD DATA
 seuObj <- readRDS("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/06_Taxonomy/AllenClustering/RDS_files/OutputUse/seuObj_iterCluster_clean_20250131.rds")
 source("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/Functions/addMetaTo_seuObj.R")
 
@@ -35,17 +41,9 @@ group_counts$grouping <- paste0(group_counts$BirdID, "-", group_counts$clusterNa
 keep_groups <- group_counts$grouping[group_counts$n_cells > 20] # histogram is 10, but example in scBestPractices is 30, so going w/20
 
 seuObj_gaba$grouping <- paste0(seuObj_gaba$BirdID, "-", seuObj_gaba$clusterName3, "-", seuObj_gaba$cn3_subclass)
-seuObj_gaba_agg <- subset(seuObj_gaba, subset = grouping %in% keep_groups)
+seuObj_gaba_agg_1 <- subset(seuObj_gaba, subset = grouping %in% keep_groups)
 
-# genes
-pct_genes <- Percent_Expressing(seuObj_gaba_agg, features = rownames(seuObj), group_by = "clusterName3", threshold = 0.2)
-pct_genes$max_pct <- apply(pct_genes, 1, max)
-pct_genes$gene <- rownames(pct_genes)
-# keep_genes <- pct_genes %>% filter(max_pct > 10) # @10% would exclude AR, but that only leaves 2,790 genes, so doesn't seem worth it.
-#                                                  # Instead will just drop replicates with few cells.
-
-
-seuObj_gaba_agg <- AggregateExpression(seuObj_gaba_agg,
+seuObj_gaba_agg <- AggregateExpression(seuObj_gaba_agg_1,
   group.by = c("BirdID", "clusterName3", "cn3_subclass"),
   assays = "SCTorigIdent3",
   slot = "counts",
@@ -90,7 +88,11 @@ for (cluster in clustsSong) {
       ident.1 = cluster,
       ident.2 = cluster2,
       test.use = "DESeq2"
+    ) %>% mutate(
+      cluster_1 = cluster,
+      cluster_2 = cluster2
     )
+
     degs_list[[paste0(cluster, "_vs_", cluster2)]]$gene <- rownames(degs_list[[paste0(cluster, "_vs_", cluster2)]])
   }
 }
@@ -173,8 +175,11 @@ DotPlot_scCustom(seuObj_gaba,
 # VISUALIZE
 other_genes <- c("RUNX1", "CUX1", "SETBP1", "NACC2", "SLIT3", "PLNXA4", "ITPR1", "HS3ST5", "OSBPL6")
 plot_list <- list()
+excel_list <- list()
+
 for (i in seq_along(degs_list)) {
   df <- degs_list[[i]]
+  excel_list[[ names(degs_list)[i] ]] <- df
 
   # make your custom colors
   point_colors <- point_colors_simple(df)
@@ -224,6 +229,8 @@ for (i in seq_along(degs_list)) {
     width = 2.2, height = 3
   )
 }
+
+write_xlsx(excel_list, path = paste0(Tables_dir, "/wInZF_songPVnSST_otherPVnSST.xlsx"))
 
 comb_plot <- wrap_plots(plot_list, ncol = 2)
 ggsave(file.path(Fig_dir, "vlcPlotComb_MGEsong_vOtherMGE.svg"),
