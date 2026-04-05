@@ -23,8 +23,6 @@ seuObj <- readRDS(
 )
 source("/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/Functions/addMetaTo_seuObj.R")
 
-re_do_mrks <- F
-
 # GET GLUT NEURONS
 cluster_use_list <- seuObj$clusterName3[grepl("Glut", seuObj$clusterName3)] %>%
   unique() %>%
