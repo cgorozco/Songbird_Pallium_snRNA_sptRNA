@@ -15,6 +15,7 @@ Tables_dir <- "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_Ana
 dir.create(Tables_dir, recursive = T)
 RDS_files <- "/project/Neuroinformatics_Core/Roberts_lab/s433904/PalliumEvo_AnalysisR/21_DGE_whyNeuronsSpecial/RDSfiles/gluts"
 dir.create(RDS_files, recursive = T)
+date_stamp <- format(Sys.Date(), "%Y-%m-%d")
 
 # LOAD DATA AND PREP
 seuObj <- readRDS(
@@ -66,7 +67,7 @@ Idents(seuObj_matNeu_agg) <- "clusterName3"
 #---- arco
 arco_clusters <- c("Glut-RA(19)", "Glut-RA(18)", "Glut-ArcoPall(27)", "Glut-Arco(1)", "Glut-Arco(10)")
 
-re_do_mrks_1 <- T
+re_do_mrks_1 <- F
 if (re_do_mrks_1) {
   arco_degs_list <- list()
   for (cluster1 in arco_clusters) {
@@ -96,9 +97,10 @@ if (re_do_mrks_1) {
       arco_degs_list[[comp_name]] <- res
     }
   }
+  saveRDS(arco_degs_list, file.path(RDS_files, "arco_AllDegs.rds"))
 }
 
-saveRDS(arco_degs_list, file.path(RDS_files, "arco_AllDegs.rds"))
+arco_degs_list <- readRDS(file.path(RDS_files, "arco_AllDegs.rds"))
 
 arco_degs_df <- bind_rows(arco_degs_list, .id = "comparison") #--save output
 write.csv(arco_degs_df,
@@ -109,16 +111,25 @@ write.csv(arco_degs_df,
 arco_degs_list_sig_up <- lapply(arco_degs_list, function(df) {
   filter(df, p_val_adj < 0.05 & avg_log2FC > 0)
 })
+
 arco_degs_list_sig_down <- lapply(arco_degs_list, function(df) {
   filter(df, p_val_adj < 0.05 & avg_log2FC < 0)
 })
 
 both_upNdown <- list(up = arco_degs_list_sig_up, down = arco_degs_list_sig_down)
-upset_results_arco <- list()
 
+upset_results_arco <- list()
 for (dir_name in names(both_upNdown)) {
   degsUse <- both_upNdown[[dir_name]]
   arco_pair <- prepare_upset_from_pairwise(degsUse, remove_loc = FALSE)
+  arco_pair$upset_df <- arco_pair$upset_df %>%
+    mutate(
+      Ortho = case_when(
+        genes %in% chkNzf_orthos ~ "Ortho",
+        TRUE ~ "Other"
+      )
+    )
+  
   upset_results_arco[[dir_name]] <- list(arco_pair = arco_pair)
 
   set_cols <- arco_clusters
@@ -139,6 +150,29 @@ for (dir_name in names(both_upNdown)) {
     sort_sets = FALSE,
     sort_intersections = FALSE,
     min_size = 3,
+    # set_sizes = upset_set_size(
+    #   mapping = aes(fill = Ortho)
+    # ) +
+    #   geom_bar(position = "fill") +
+    #   scale_fill_manual(values = c(
+    #     "Ortho" = "orange",
+    #     "Other" = "grey70"
+    #   )) +
+    #  scale_y_continuous(labels = scales::percent),
+    annotations = list(
+      'Set Size Ortho' = list(
+        aes = aes(x = intersection, fill = Ortho),
+        geom = list(
+          geom_bar(position = "fill"),
+          scale_y_continuous(labels = scales::percent),
+          scale_fill_manual(values = c(
+            "Ortho" = "orange",
+            "Other" = "grey70"
+          )),
+          labs(y = "Percentage")
+        )
+      )
+    ),
     intersections = list(
       "Glut-RA(19)", "Glut-RA(18)", "Glut-ArcoPall(27)", "Glut-Arco(1)", "Glut-Arco(10)",
       c("Glut-RA(19)", "Glut-RA(18)"),
@@ -155,20 +189,21 @@ for (dir_name in names(both_upNdown)) {
 
   # save df for upset
   write.csv(upset_results_arco[[dir_name]][["arco_pair"]][["upset_df"]],
-    file = paste0(Tables_dir, "/arco_upsetDEGs_", dir_name, ".csv"), row.names = FALSE
+    file = paste0(Tables_dir, "/arco_upsetDEGs_", dir_name, date_stamp, ".csv"), row.names = FALSE
   )
-}
+  saveRDS(upset_results_arco, file.path(RDS_files, paste0("upsetDF_arco", date_stamp, ".rds")))
+  }
 
-saveRDS(upset_results_arco, file.path(RDS_files, "upsetDF_arco.rds"))
+upset_results_arco <- readRDS(file.path(RDS_files, "upsetDF_arco.rds"))
 
 arco_up <- upset_results_arco$up$upsetR
-ggsave(file.path(Figures_dir, "upset_byPallField_arcoUp.svg"),
+ggsave(file.path(Figures_dir, "upset_byPallField_arcoUp_wOrtho.svg"),
   plot = arco_up,
   width = 6, height = 3
 )
 
 arco_down <- upset_results_arco$down$upsetR
-ggsave(file.path(Figures_dir, "upset_byPallField_arcoDown.svg"),
+ggsave(file.path(Figures_dir, "upset_byPallField_arcoDown_wOrtho.svg"),
   plot = arco_down,
   width = 6, height = 3
 )
@@ -179,7 +214,7 @@ nido_clusters <- levels(Idents(seuObj_matNeu_agg)) %>%
   .[!grepl("Arco|RA|Meso|\\(9\\)", .)]
 
 
-re_do_mrks_2 <- T
+re_do_mrks_2 <- F
 if (re_do_mrks_2) {
   nido_degs_list <- list()
   for (cluster1 in nido_clusters) {
@@ -209,9 +244,10 @@ if (re_do_mrks_2) {
       nido_degs_list[[comp_name]] <- res
     }
   }
+  saveRDS(nido_degs_list, file.path(RDS_files, "nido_AllDegs.rds"))
 }
 
-saveRDS(nido_degs_list, file.path(RDS_files, "nido_AllDegs.rds"))
+nido_degs_list <- readRDS(file.path(RDS_files, "nido_AllDegs.rds"))
 
 nido_degs_df <- bind_rows(nido_degs_list, .id = "comparison") #--save output
 write.csv(nido_degs_df,
@@ -232,6 +268,14 @@ upset_results_nido <- list()
 for (dir_name in names(both_upNdown)) {
   degsUse <- both_upNdown[[dir_name]]
   nido_pair <- prepare_upset_from_pairwise(degsUse, remove_loc = T)
+  nido_pair$upset_df <- nido_pair$upset_df %>%
+    mutate(
+      Ortho = case_when(
+        genes %in% chkNzf_orthos ~ "Ortho",
+        TRUE ~ "Other"
+      )
+    )
+  
   upset_results_nido[[dir_name]] <- list(nido_pair = nido_pair)
 
   set_cols <- nido_clusters
@@ -242,6 +286,20 @@ for (dir_name in names(both_upNdown)) {
     sort_sets = FALSE,
     sort_intersections = FALSE,
     min_size = 1,
+    annotations = list(
+      'Set Size Ortho' = list(
+        aes = aes(x = intersection, fill = Ortho),
+        geom = list(
+          geom_bar(position = "fill"),
+          scale_y_continuous(labels = scales::percent),
+          scale_fill_manual(values = c(
+            "Ortho" = "orange",
+            "Other" = "grey70"
+          )),
+          labs(y = "Percentage")
+        )
+      )
+    ),
     intersections = list(
       "Glut-HVC(7)", "Glut-HVC(8)", "Glut-NidoHyperPall(28)", "Glut-NidoHyperPall(23)",
       "Glut-NidoHyperPall(24)", "Glut-NidoHyperPall(26)", "Glut-NidoHyperPall(20)",
@@ -278,24 +336,32 @@ for (dir_name in names(both_upNdown)) {
   write.csv(upset_results_nido[[dir_name]][["nido_pair"]][["upset_df"]],
     file = paste0(Tables_dir, "/nido_upsetDEGs_", dir_name, ".csv"), row.names = FALSE
   )
+  saveRDS(upset_results_nido, file.path(RDS_files, "upsetDF_nido.rds"))
+  
 }
 
-saveRDS(upset_results_nido, file.path(RDS_files, "upsetDF_nido.rds"))
+upset_results_nido <- readRDS(file.path(RDS_files, "upsetDF_nido.rds"))
 
 nido_up <- upset_results_nido$up$upsetR
-ggsave(file.path(Figures_dir, "upset_byPallField_nidoUp.svg"),
+ggsave(file.path(Figures_dir, "upset_byPallField_nidoUp_wOrtho.svg"),
   plot = nido_up,
   width = 6, height = 5
 )
 
 nido_down <- upset_results_nido$down$upsetR
-ggsave(file.path(Figures_dir, "upset_byPallField_nidoDown.svg"),
+ggsave(file.path(Figures_dir, "upset_byPallField_nidoDown_wOrtho.svg"),
   plot = nido_down,
   width = 6, height = 5
 )
 
 
 #### === another upset with just song/shell clusters to check that overlap
+set_cols <- c(
+  "Glut-HVC(7)", "Glut-HVC(8)", "Glut-NidoHyperPall(28)",
+  "Glut-LMAN(44)", "Glut-LMAN(45)",
+  "Glut-ArcoPall(27)", "Glut-RA(18)", "Glut-RA(19)"
+)
+
 combUse <- list()
 for (dir in c("up", "down")) {
   ## ---- select data ----
@@ -315,19 +381,37 @@ for (dir in c("up", "down")) {
   ## ---- combine ----
   combUse[[dir]] <- full_join(nidoUse, arcoUse, by = "genes") %>%
     mutate(across(-genes, ~ replace_na(.x, FALSE))) %>%
-    filter(if_any(-genes, identity))
+    filter(if_any(-genes, identity)) %>%
+    mutate(Ortho = case_when(
+      genes %in% chkNzf_orthos ~ "Ortho",
+      TRUE ~ "Other"
+    ))
 
   write.csv(combUse[[dir]],
     file = paste0(Tables_dir, "/songGluts_sharedDEGs_", dir, ".csv"), row.names = FALSE
   )
 
   ## ---- upset ----
-  upsetShareXPallial <- upset(
+  upsetShareXPallial <- ComplexUpset::upset(
     combUse[[dir]],
-    intersect = colnames(combUse[[dir]]),
+    intersect = set_cols,
     sort_sets = FALSE,
     sort_intersections = FALSE,
-    min_size = 1,
+  min_size = 1,
+    annotations = list(
+      'Set Size Ortho' = list(
+        aes = aes(x = intersection, fill = Ortho),
+        geom = list(
+          geom_bar(position = "fill"),
+          scale_y_continuous(labels = scales::percent),
+          scale_fill_manual(values = c(
+            "Ortho" = "orange",
+            "Other" = "grey70"
+          )),
+          labs(y = "Percentage")
+        )
+      )
+    ),
     intersections = list(
       "Glut-HVC(7)", "Glut-HVC(8)", "Glut-NidoHyperPall(28)",
       "Glut-LMAN(44)", "Glut-LMAN(45)",
@@ -353,16 +437,17 @@ for (dir in c("up", "down")) {
       c("Glut-LMAN(44)", "Glut-RA(18)", "Glut-ArcoPall(27)"),
       c("Glut-NidoHyperPall(28)", "Glut-LMAN(44)", "Glut-RA(18)", "Glut-ArcoPall(27)")
     )
-  )
-
-  ## ---- save ----
+  ) 
+  
+  # ---- save ----
   ggsave(
     file.path(
       Figures_dir,
-      paste0("upset_byPallField_Shared_SongOrSorround_", dir, ".svg")
+      paste0("upset_byPallField_Shared_SongOrSorround_wOrthos_", dir, ".svg")
     ),
     plot = upsetShareXPallial,
     width = 6.5,
     height = 4.5
   )
 }
+upsetShareXPallial
