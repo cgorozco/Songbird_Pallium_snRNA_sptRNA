@@ -3,6 +3,7 @@ Cellular and spatial transcriptomics of several regions across the zebra finch p
 
 ## Data
 Seurat processed data objects can be accessed at https://cloud.biohpc.swmed.edu/index.php/s/iHqntrbk6rMAqqc
+
 Raw and processed data are available in the Gene Expression Omnibus for the snRNAseq (GSE316328) and for the spatial dataset (GSE316807). 
 To run the analysis, directories will need to be changed.
 
